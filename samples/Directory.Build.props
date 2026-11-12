@@ -1,0 +1,2 @@
+<!-- Keeps the repository root's Directory.Build.props (server settings) away from the sample app. -->
+<Project />

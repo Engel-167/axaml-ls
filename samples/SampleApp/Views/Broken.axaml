@@ -1,0 +1,36 @@
+<!-- Every line marked "expect" must produce that diagnostic (checked by the tests). -->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SampleApp.ViewModels"
+             x:Class="SampleApp.Views.Broken">
+    <StackPanel>
+        <!-- expect AXN0100: no x:DataType in scope -->
+        <TextBlock Text="{Binding Title}"/>
+        <StackPanel x:DataType="vm:MainViewModel">
+            <!-- expect AXN0101: typo -->
+            <TextBlock Text="{Binding Titel}"/>
+            <!-- expect AXN0101: member of the item, not the list -->
+            <TextBlock Text="{Binding Items.Name}"/>
+            <!-- expect AXN0103: no element named Footer -->
+            <TextBlock Text="{Binding #Footer.Text}"/>
+            <!-- expect AXN0201: unknown control -->
+            <TextBlok Text="x"/>
+            <!-- expect AXN0202: unknown property -->
+            <TextBlock Txt="x"/>
+            <!-- expect AXN0302: handler missing in code-behind -->
+            <Button Click="OnMissing"/>
+            <!-- expect AXN0011: path syntax -->
+            <TextBlock Text="{Binding Title..Length}"/>
+            <ItemsControl ItemsSource="{Binding Items}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <!-- expect AXN0101: inferred item type ItemViewModel has no Title -->
+                        <TextBlock Text="{Binding Title}"/>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+        <!-- expect AXN0201: unknown x:DataType -->
+        <StackPanel x:DataType="vm:NopeViewModel"/>
+    </StackPanel>
+</UserControl>

@@ -1,0 +1,39 @@
+# Push a tag like v0.1.0 (matching <Version> in src/AxamlLs/AxamlLs.csproj) to publish a release.
+# The asset axaml-ls-<version>.zip is what the Zed extension downloads: a framework-dependent build,
+# run with `dotnet AxamlLs.dll` (users of the server already have the .NET SDK, which it needs to load projects).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Test
+        run: |
+          dotnet restore samples/SampleApp/SampleApp.csproj
+          dotnet test tests/AxamlLs.Tests/AxamlLs.Tests.csproj -c Release
+      - name: Package
+        id: package
+        run: |
+          version="$(dotnet msbuild src/AxamlLs/AxamlLs.csproj -getProperty:Version)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match <Version>$version</Version>" >&2; exit 1
+          fi
+          dotnet publish src/AxamlLs -c Release -o dist/axaml-ls
+          cp LICENSE dist/axaml-ls/
+          (cd dist/axaml-ls && python3 -m zipfile -c "../axaml-ls-$version.zip" *)
+          echo "zip=dist/axaml-ls-$version.zip" >> "$GITHUB_OUTPUT"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.package.outputs.zip }}" --title "$GITHUB_REF_NAME" --generate-notes

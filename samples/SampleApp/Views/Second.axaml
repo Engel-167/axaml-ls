@@ -1,0 +1,11 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SampleApp.ViewModels"
+             x:Class="SampleApp.Views.Second"
+             x:DataType="vm:MainViewModel">
+    <StackPanel>
+        <TextBlock Text="{Binding Title}" Foreground="{StaticResource Accent}"/>
+        <Button Classes="Card" Content="{Binding Title}" Command="{Binding SaveCommand}"/>
+        <Border Classes.Card="{Binding IsBusy}" Background="{DynamicResource Accent}"/>
+    </StackPanel>
+</UserControl>

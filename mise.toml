@@ -1,0 +1,62 @@
+# Dev environment for axaml-ls, the AXAML language server.
+#   mise install          -> .NET SDK
+#   mise tasks            -> list everything below
+[tools]
+dotnet = "10"
+
+[env]
+DOTNET_CLI_TELEMETRY_OPTOUT = "1"
+DOTNET_NOLOGO = "1"
+
+[tasks.build]
+description = "Build the language server (Debug)"
+run = "dotnet build AxamlLs.slnx -c Debug"
+
+[tasks.test]
+description = "Run the tests (restores the sample Avalonia app they load)"
+run = [
+  "dotnet restore samples/SampleApp/SampleApp.csproj",
+  "dotnet test tests/AxamlLs.Tests/AxamlLs.Tests.csproj",
+]
+
+[tasks.smoke]
+description = "Talk LSP to the server like an editor would, on a sample file"
+depends = ["build"]
+run = "python3 scripts/lsp-smoke.py dotnet src/AxamlLs/bin/Debug/net10.0/AxamlLs.dll -- ${1:-samples/SampleApp/Views/MainView.axaml}"
+
+[tasks.check]
+description = "Analyze .axaml files from the command line: mise run check -- <dir-or-file>..."
+run = "dotnet run --project src/AxamlLs -c Debug -- check"
+
+[tasks.package]
+description = "Build the release zip the editor extensions download: dist/axaml-ls-<version>.zip"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+version="$(dotnet msbuild src/AxamlLs/AxamlLs.csproj -getProperty:Version)"
+rm -rf dist && mkdir -p dist
+dotnet publish src/AxamlLs -c Release -o dist/axaml-ls
+cp LICENSE dist/axaml-ls/
+(cd dist/axaml-ls && python3 -m zipfile -c "../axaml-ls-$version.zip" *)
+echo "dist/axaml-ls-$version.zip"
+"""
+
+[tasks.install]
+description = "Publish axaml-ls to ~/.local/share/axaml-ls and put a launcher in ~/.local/bin (editors find it on PATH)"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+dest="$HOME/.local/share/axaml-ls"
+rm -rf "$dest"
+dotnet publish src/AxamlLs -c Release -o "$dest"
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/axaml-ls" <<'SH'
+#!/usr/bin/env sh
+# Launcher for the AXAML language server. Finds dotnet on PATH, else through mise.
+DOTNET="$(command -v dotnet 2>/dev/null || mise which dotnet 2>/dev/null)"
+if [ -z "$DOTNET" ]; then echo "axaml-ls: dotnet not found" >&2; exit 1; fi
+exec "$DOTNET" "$HOME/.local/share/axaml-ls/AxamlLs.dll" "$@"
+SH
+chmod +x "$HOME/.local/bin/axaml-ls"
+echo "installed: $HOME/.local/bin/axaml-ls"
+"""

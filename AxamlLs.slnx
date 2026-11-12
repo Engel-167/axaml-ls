@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/AxamlLs/AxamlLs.csproj" />
+  <Project Path="tests/AxamlLs.Tests/AxamlLs.Tests.csproj" />
+</Solution>

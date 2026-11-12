@@ -1,0 +1,46 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:SampleApp.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="400"
+             x:Class="SampleApp.Views.MainView"
+             x:DataType="vm:MainViewModel">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="Accent" Color="#FF6600"/>
+    </UserControl.Resources>
+    <UserControl.Styles>
+        <Style Selector="Button.Card">
+            <Setter Property="Background" Value="{StaticResource Accent}"/>
+        </Style>
+    </UserControl.Styles>
+    <StackPanel Spacing="8">
+        <TextBlock x:Name="Header" Text="{Binding Title}" IsVisible="{Binding !IsBusy}"/>
+        <TextBlock Text="{Binding #Header.Text}"/>
+        <TextBlock Text="{Binding Greeting^}"/>
+        <TextBlock Text="{Binding Selected.Name, FallbackValue='-'}"/>
+        <TextBlock Text="{Binding $parent[UserControl].((vm:MainViewModel)DataContext).Title}"/>
+        <TextBlock Text="{Binding Text, ElementName=Header}"/>
+        <TextBlock Grid.Row="1" Text="{Binding (Grid.Row), RelativeSource={RelativeSource Self}}"/>
+        <Button x:Name="SaveButton" Classes="Card" Content="Save" Command="{Binding SaveCommand}" Click="OnClick"/>
+        <TextBlock Text="{Binding #SaveButton.Content}" Foreground="{StaticResource Accent}"/>
+        <Button Content="Reset" Command="{Binding Reset}"/>
+        <ItemsControl ItemsSource="{Binding Items}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Name}"/>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <ListBox ItemsSource="{Binding Items}">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:ItemViewModel">
+                    <StackPanel>
+                        <TextBlock Text="{Binding Price, StringFormat='{}{0:C}'}"/>
+                        <TextBlock Text="{ReflectionBinding Whatever}"/>
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </StackPanel>
+</UserControl>
