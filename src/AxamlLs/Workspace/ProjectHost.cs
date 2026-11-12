@@ -35,6 +35,12 @@ public sealed class ProjectHost : IDisposable
     /// <summary>Raised (on a background thread) after a new snapshot is available.</summary>
     public event Action<ProjectHost>? Updated;
 
+    /// <summary>
+    /// Called when saved .cs files rename declarations (see <see cref="Analysis.CodeRenames"/>), before the new code
+    /// becomes <see cref="Current"/>: AXAML analyzed against the current snapshot still resolves the old names.
+    /// </summary>
+    public Func<ProjectHost, IReadOnlyList<Analysis.CodeRename>, Task>? CodeRenamed { get; set; }
+
     public ProjectHost(string projectPath)
     {
         ProjectPath = projectPath;
@@ -180,6 +186,8 @@ public sealed class ProjectHost : IDisposable
             if (_solution == null || _projectId == null) return;
 
             var changed = false;
+            var before = _solution;
+            var edited = new List<(DocumentId Id, SourceText Text)>();
             foreach (var path in _pendingFiles.Keys.ToList())
             {
                 _pendingFiles.TryRemove(path, out _);
@@ -201,6 +209,7 @@ public sealed class ProjectHost : IDisposable
                     if (ids.Length > 0)
                     {
                         foreach (var id in ids) _solution = _solution.WithDocumentText(id, source);
+                        edited.Add((ids[0], source));
                     }
                     else if (path.StartsWith(ProjectDirectory + Path.DirectorySeparatorChar, StringComparison.Ordinal))
                     {
@@ -219,6 +228,7 @@ public sealed class ProjectHost : IDisposable
                     changed = true;
                 }
             }
+            if (changed && CodeRenamed is { } onRenamed) await ReportRenamesAsync(before, edited, onRenamed).ConfigureAwait(false);
             if (changed) await RebuildSnapshotAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -228,6 +238,32 @@ public sealed class ProjectHost : IDisposable
         finally
         {
             _gate.Release();
+        }
+    }
+
+    private async Task ReportRenamesAsync(Solution before, List<(DocumentId Id, SourceText Text)> edited, Func<ProjectHost, IReadOnlyList<Analysis.CodeRename>, Task> onRenamed)
+    {
+        var renames = new List<Analysis.CodeRename>();
+        foreach (var (id, text) in edited)
+        {
+            if (before.GetDocument(id) is not { } document) continue;
+            try
+            {
+                renames.AddRange(await Analysis.CodeRenames.DetectAsync(document, text).ConfigureAwait(false));
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Looking for renames in {document.FilePath} failed", ex);
+            }
+        }
+        if (renames.Count == 0) return;
+        try
+        {
+            await onRenamed(this, renames).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Following a C# rename in AXAML failed", ex);
         }
     }
 

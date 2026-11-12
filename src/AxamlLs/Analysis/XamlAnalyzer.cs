@@ -206,9 +206,25 @@ public sealed class XamlAnalyzer
         if (info.Ignored) return;
         _visited.Add(el);
         var s = ScopeFor(el, info, scope, report: true);
+
+        // DataContext="{Binding …}" without x:DataType: the compiler takes the binding's type as the data type of the
+        // element's other bindings and of its children, so analyse that attribute first, in the outer scope.
+        var dataContext = InferrableDataContext(el, info);
+        if (dataContext != null)
+        {
+            AnalyzeAttribute(el, info, dataContext, s);
+            s = WithDataContext(el, info, s);
+        }
+        else
+        {
+            s = WithDataContext(el, info, s);
+        }
         info.Scope = s;
 
-        foreach (var attr in el.Attributes) AnalyzeAttribute(el, info, attr, s);
+        foreach (var attr in el.Attributes)
+        {
+            if (attr != dataContext) AnalyzeAttribute(el, info, attr, s);
+        }
         if (!info.IsPropertyElement && el.LookupNamespace(el.Prefix ?? "") == XamlNamespaces.Avalonia &&
             el.LocalName is "Binding" or "CompiledBinding" or "ReflectionBinding")
         {
@@ -248,6 +264,35 @@ public sealed class XamlAnalyzer
         {
             var t = ResolveTypeAttribute(el, xdt, report);
             s = s with { DataType = t, DataTypeRequired = false };
+        }
+        return s;
+    }
+
+    /// <summary>The element's DataContext="{…}" attribute when it decides the data type (no x:DataType on the element).</summary>
+    private XmlAttr? InferrableDataContext(XmlElement el, ElementInfo info)
+    {
+        if (info.IsPropertyElement || XAttr(el, "DataType") != null) return null;
+        var attr = el.Attr("DataContext");
+        return attr is { HasValue: true } && MarkupExtension.IsMarkup(attr.Value) ? attr : null;
+    }
+
+    /// <summary>
+    /// The scope after the element's own DataContext, when it has no x:DataType: the type of a DataContext="{Binding …}"
+    /// (already analysed), or of the object in &lt;X.DataContext&gt;&lt;vm:Foo/&gt;&lt;/X.DataContext&gt;. A DataContext whose type
+    /// cannot be told (a reflection binding, an unresolved path) leaves the data type unknown rather than wrong.
+    /// </summary>
+    private Scope WithDataContext(XmlElement el, ElementInfo info, Scope s)
+    {
+        if (info.IsPropertyElement || XAttr(el, "DataType") != null) return s;
+        if (InferrableDataContext(el, info) != null)
+            return s with { DataType = _bindingResults.GetValueOrDefault((el, "DataContext")), DataTypeRequired = false };
+
+        foreach (var child in el.Children)
+        {
+            if (!_r.Elements.TryGetValue(child, out var ci) || !ci.IsPropertyElement || ci.PropertyName != "DataContext") continue;
+            var value = child.Children.FirstOrDefault(c => _r.Elements.TryGetValue(c, out var vi) && !vi.IsPropertyElement && !vi.Ignored);
+            if (value == null) return s;
+            return s with { DataType = _r.Elements[value].Type, DataTypeRequired = false };
         }
         return s;
     }
@@ -754,7 +799,7 @@ public sealed class XamlAnalyzer
                 s = known;
                 continue;
             }
-            s = ScopeFor(e, _r.Elements[e], s, report: false);
+            s = WithDataContext(e, _r.Elements[e], ScopeFor(e, _r.Elements[e], s, report: false));
         }
         return s.DataType;
     }

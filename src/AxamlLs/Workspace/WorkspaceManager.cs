@@ -10,6 +10,9 @@ public sealed class WorkspaceManager : IDisposable
 
     public event Action<ProjectHost>? ProjectUpdated;
 
+    /// <summary>Called when a saved .cs file renamed declarations (see <see cref="ProjectHost.CodeRenamed"/>).</summary>
+    public Func<ProjectHost, IReadOnlyList<Analysis.CodeRename>, Task>? CodeRenamed { get; set; }
+
     public ProjectHost? GetHostFor(string axamlPath, bool startLoading = true)
     {
         var dir = Path.GetDirectoryName(Path.GetFullPath(axamlPath)) ?? "";
@@ -19,6 +22,7 @@ public sealed class WorkspaceManager : IDisposable
         {
             var h = new ProjectHost(p);
             h.Updated += x => ProjectUpdated?.Invoke(x);
+            h.CodeRenamed = (x, renames) => CodeRenamed?.Invoke(x, renames) ?? Task.CompletedTask;
             return h;
         });
         if (startLoading) _ = host.EnsureLoadedAsync();

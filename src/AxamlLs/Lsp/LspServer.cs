@@ -33,6 +33,7 @@ public sealed class LspServer : IDisposable
     {
         _rpc = new JsonRpc(input, output);
         _workspace.ProjectUpdated += OnProjectUpdated;
+        _workspace.CodeRenamed = FollowCodeRenamesAsync;
     }
 
     public async Task RunAsync()
@@ -92,6 +93,7 @@ public sealed class LspServer : IDisposable
                 "textDocument/codeAction" => CodeAction(p!),
                 "textDocument/documentSymbol" => DocumentSymbols(p!),
                 "textDocument/foldingRange" => FoldingRanges(p!),
+                "textDocument/linkedEditingRange" => LinkedEditingRange(p!),
                 "textDocument/typeDefinition" => ToLocations(p!, Navigation.TypeDefinition),
                 "textDocument/implementation" => ToLocations(p!, Navigation.Implementation),
                 "textDocument/codeLens" => CodeLens(p!),
@@ -197,6 +199,7 @@ public sealed class LspServer : IDisposable
                 ["executeCommandProvider"] = new JsonObject { ["commands"] = new JsonArray(OpenFileCommand) },
                 ["codeActionProvider"] = new JsonObject { ["codeActionKinds"] = new JsonArray("quickfix") },
                 ["renameProvider"] = new JsonObject { ["prepareProvider"] = true },
+                ["linkedEditingRangeProvider"] = true,
                 ["colorProvider"] = true,
                 ["inlayHintProvider"] = true,
                 ["documentOnTypeFormattingProvider"] = new JsonObject { ["firstTriggerCharacter"] = "/" },
@@ -312,6 +315,67 @@ public sealed class LspServer : IDisposable
         {
             if (_workspace.GetHostFor(doc.Path, startLoading: false) == host) Schedule(doc, delayMs: 0);
         }
+    }
+
+    /// <summary>
+    /// A saved .cs file renamed declarations (the C# server's rename, or by hand): make the project's AXAML use the new names.
+    /// Called before the project is rebuilt, so the AXAML is still analysed against the old code and finds the old names.
+    /// Open files change through workspace/applyEdit (undoable, left unsaved); closed ones are rewritten on disk, but only
+    /// when the disk still holds the text that was analysed.
+    /// </summary>
+    private async Task FollowCodeRenamesAsync(ProjectHost host, IReadOnlyList<CodeRename> renames)
+    {
+        var buffers = OpenBuffers();
+        var files = _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, buffers);
+        var edits = CodeRenames.AxamlEdits(renames, files);
+        if (edits.Count == 0) return;
+
+        var byPath = files.ToDictionary(f => f.Path, StringComparer.Ordinal);
+        var openEdits = new List<FileEdit>();
+        var applied = 0;
+        foreach (var group in edits.GroupBy(e => e.Path, StringComparer.Ordinal))
+        {
+            if (buffers.ContainsKey(group.Key))
+            {
+                openEdits.AddRange(group);
+                continue;
+            }
+            try
+            {
+                var bytes = await File.ReadAllBytesAsync(group.Key).ConfigureAwait(false);
+                var bom = bytes is [0xEF, 0xBB, 0xBF, ..];
+                var disk = new System.Text.UTF8Encoding(false).GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
+                if (disk != byPath[group.Key].Text) continue; // changed since it was analysed: leave it
+                await File.WriteAllTextAsync(group.Key, Edits.Apply(disk, group), new System.Text.UTF8Encoding(bom)).ConfigureAwait(false);
+                applied += group.Count();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Could not update {group.Key} after a rename", ex);
+            }
+        }
+        if (openEdits.Count > 0)
+        {
+            await _rpc.SendAsync(new JsonObject
+            {
+                ["id"] = $"axaml-{Interlocked.Increment(ref _nextRequestId)}",
+                ["method"] = "workspace/applyEdit",
+                ["params"] = new JsonObject
+                {
+                    ["label"] = "Follow C# rename",
+                    ["edit"] = Edits.ToWorkspaceEdit(openEdits, path => (byPath[path].Text, byPath[path].Lines)),
+                },
+            }).ConfigureAwait(false);
+            applied += openEdits.Count;
+        }
+        if (applied == 0) return;
+
+        var names = string.Join(", ", renames.Where(r => edits.Any(e => e.NewText == r.NewName)).Select(r => $"{r.OldSymbol.Name} → {r.NewName}").Distinct());
+        await _rpc.SendAsync(new JsonObject
+        {
+            ["method"] = "window/showMessage",
+            ["params"] = new JsonObject { ["type"] = 3, ["message"] = $"axaml-ls: renamed {names} in {applied} AXAML place{(applied == 1 ? "" : "s")}." },
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Shows "Loading Orion_POS.csproj" in Zed's status bar until the first load finishes.</summary>
@@ -538,6 +602,24 @@ public sealed class LspServer : IDisposable
                 ["start"] = new JsonObject { ["line"] = target.StartLine, ["character"] = target.StartCharacter },
                 ["end"] = new JsonObject { ["line"] = target.EndLine, ["character"] = target.EndCharacter },
             },
+        };
+    }
+
+    /// <summary>The start and end tag names of the element under the cursor, edited together.</summary>
+    private JsonNode? LinkedEditingRange(JsonObject p)
+    {
+        var uri = (string)p["textDocument"]!["uri"]!;
+        if (!_documents.TryGetValue(uri, out var doc)) return null;
+        string text;
+        lock (doc) text = doc.Text;
+        var lines = new LineIndex(text);
+        var pos = p["position"]!;
+        var offset = lines.GetOffset((int)pos["line"]!, (int)pos["character"]!);
+        if (LinkedTags.At(Xaml.XmlDoc.Parse(text), text, offset) is not var (open, close)) return null;
+        return new JsonObject
+        {
+            ["ranges"] = new JsonArray(Edits.Range(lines, open.Start, open.End), Edits.Range(lines, close.Start, close.End)),
+            ["wordPattern"] = @"[A-Za-z_][\w.:-]*",
         };
     }
 

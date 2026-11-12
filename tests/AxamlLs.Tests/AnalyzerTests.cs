@@ -52,6 +52,44 @@ public class AnalyzerTests(SampleProjectFixture sample)
     }
 
     [Fact]
+    public void A_bound_DataContext_sets_the_data_type_of_the_element_and_its_children()
+    {
+        const string text = """
+            <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                         xmlns:vm="using:SampleApp.ViewModels" x:DataType="vm:MainViewModel">
+              <StackPanel DataContext="{Binding Selected}" Tag="{Binding Name}">
+                <TextBlock Text="{Binding Price}"/>
+                <TextBlock Text="{Binding Title}"/>
+              </StackPanel>
+            </UserControl>
+            """;
+        var d = Assert.Single(sample.Analyze(text).Result.Diagnostics);
+        Assert.Equal(Codes.UnknownBindingMember, d.Code);
+        Assert.Equal(text.IndexOf("Title}", StringComparison.Ordinal), d.Start);
+    }
+
+    [Fact]
+    public void An_object_DataContext_sets_the_data_type_and_an_unknown_one_checks_nothing()
+    {
+        const string text = """
+            <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                         xmlns:vm="using:SampleApp.ViewModels" x:DataType="vm:MainViewModel">
+              <StackPanel>
+                <StackPanel>
+                  <StackPanel.DataContext><vm:ItemViewModel/></StackPanel.DataContext>
+                  <TextBlock Text="{Binding Name}"/>
+                </StackPanel>
+                <StackPanel DataContext="{Binding Nope}" Tag="{Binding Anything}">
+                  <TextBlock Text="{Binding Whatever}"/>
+                </StackPanel>
+              </StackPanel>
+            </UserControl>
+            """;
+        var d = Assert.Single(sample.Analyze(text).Result.Diagnostics);
+        Assert.Equal(text.IndexOf("Nope}", StringComparison.Ordinal), d.Start);
+    }
+
+    [Fact]
     public void Reflection_bindings_are_not_checked_but_compiled_ones_are()
     {
         const string text = """

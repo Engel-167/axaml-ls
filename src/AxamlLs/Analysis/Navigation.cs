@@ -1,4 +1,5 @@
 using AxamlLs.Text;
+using AxamlLs.Xaml;
 using AxamlLs.Workspace;
 using Microsoft.CodeAnalysis;
 
@@ -114,5 +115,28 @@ public static class Folding
             i = end;
         }
         return ranges.DistinctBy(r => (r.StartLine, r.EndLine)).OrderBy(r => r.StartLine).ThenBy(r => r.EndLine).ToList();
+    }
+}
+
+/// <summary>
+/// Linked editing: the names of an element's start and end tags, so renaming one renames the other as you type
+/// (Zed: "linked_edits": true, the default).
+/// </summary>
+public static class LinkedTags
+{
+    /// <summary>The [start, end) ranges of both tag names when <paramref name="offset"/> is inside or at the edge of either.</summary>
+    public static ((int Start, int End) Open, (int Start, int End) Close)? At(XmlDoc doc, string text, int offset)
+    {
+        foreach (var el in doc.AllElements)
+        {
+            if (el.SelfClosing || el.EndTagStart < 0) continue;
+            var closeStart = el.EndTagStart + 2;
+            var closeEnd = closeStart + el.Name.Length;
+            if (closeEnd > text.Length || string.CompareOrdinal(text, closeStart, el.Name, 0, el.Name.Length) != 0) continue;
+            var inOpen = offset >= el.NameStart && offset <= el.NameEnd;
+            var inClose = offset >= closeStart && offset <= closeEnd;
+            if (inOpen || inClose) return ((el.NameStart, el.NameEnd), (closeStart, closeEnd));
+        }
+        return null;
     }
 }
