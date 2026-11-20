@@ -16,7 +16,7 @@ public class QuickFixTests(SampleProjectFixture sample)
     {
         var analyzer = sample.Analyze(xaml);
         ProjectXaml.Wire(analyzer, ViewPath, sample.Host, () => new Dictionary<string, string>());
-        var d = LspServer.CollectDiagnostics(analyzer).Select(x => x.Diagnostic).First(x => x.Code == code);
+        var d = DocumentDiagnostics.Collect(analyzer).Select(x => x.Diagnostic).First(x => x.Code == code);
         return QuickFixes.For(analyzer, d).Select(f =>
         {
             var edited = f.Edits.Select(e => e.Path).Distinct().Single(); // these fixes edit one file

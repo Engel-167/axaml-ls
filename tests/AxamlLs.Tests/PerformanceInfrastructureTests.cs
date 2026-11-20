@@ -26,14 +26,14 @@ public class PerformanceInfrastructureTests
             Change(1, 3, 1, 9, "TextBlock"),          // Button → TextBlock
             Change(1, 12, 1, 12, " Text=\"hi\""),      // insert after the new name
             Change(0, 0, 0, 0, "<!-- top -->\n"));    // insert a line above everything
-        Assert.Equal("<!-- top -->\n<Grid>\n  <TextBlock Text=\"hi\"/>\n</Grid>", LspServer.ApplyChanges(text, changes));
+        Assert.Equal("<!-- top -->\n<Grid>\n  <TextBlock Text=\"hi\"/>\n</Grid>", Protocol.ApplyContentChanges(text, changes));
     }
 
     [Fact]
     public void A_change_without_range_replaces_the_text()
     {
         var changes = new JsonArray(new JsonObject { ["text"] = "<A/>" }, Change(0, 1, 0, 2, "B"));
-        Assert.Equal("<B/>", LspServer.ApplyChanges("<Grid/>", changes));
+        Assert.Equal("<B/>", Protocol.ApplyContentChanges("<Grid/>", changes));
     }
 
     [Fact]

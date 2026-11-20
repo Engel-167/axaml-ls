@@ -1,53 +1,68 @@
 using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
-using AxamlLs.Analysis;
-using AxamlLs.Text;
+using AxamlLs.Lsp.Handlers;
 using AxamlLs.Workspace;
 
 namespace AxamlLs.Lsp;
 
-/// <summary>The AXAML language server: diagnostics, hover, go-to-definition and completion.</summary>
+/// <summary>
+/// The AXAML language server's message loop: reads JSON-RPC messages, routes each to the handler for its method,
+/// negotiates capabilities in <c>initialize</c> and honours <c>$/cancelRequest</c>. What each method does lives in
+/// <c>Lsp/Handlers/</c>; documents, diagnostics and the editor connection are their own classes.
+/// </summary>
 public sealed class LspServer : IDisposable
 {
-    /// <summary>One analysis of a document version. A class, so it is published to other threads with one reference write.</summary>
-    private sealed record DocumentAnalysis(int Version, ProjectSnapshot? Project, XamlAnalyzer Analyzer, LineIndex Lines);
-
-    private sealed class OpenDocument
-    {
-        public required string Uri { get; init; }
-        public required string Path { get; init; }
-        /// <summary>Text and Version change together under <c>lock (doc)</c>.</summary>
-        public string Text { get; set; } = "";
-        public int Version { get; set; }
-        public CancellationTokenSource? Pending { get; set; }
-        private DocumentAnalysis? _cached;
-        public DocumentAnalysis? Cached { get => Volatile.Read(ref _cached); set => Volatile.Write(ref _cached, value); }
-        /// <summary>Held while analyzing, so concurrent requests for the same version wait for one analysis instead of each running it.</summary>
-        public readonly object AnalyzeLock = new();
-        /// <summary>The diagnostics last sent and the project snapshot they were computed with, to skip sending the same list again.</summary>
-        public (string Json, ProjectSnapshot? Project)? LastPublished { get; set; }
-    }
-
-    /// <summary>What other files' diagnostics depend on, per project folder: style facts and the set of resource keys.</summary>
-    private sealed record CrossFileFacts(ProjectStyles? Styles, HashSet<string>? Keys);
-
     private readonly JsonRpc _rpc;
+    private readonly LspClient _client;
+    private readonly Session _session = new();
     private readonly WorkspaceManager _workspace = new();
-    private readonly ConcurrentDictionary<string, OpenDocument> _documents = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<ProjectHost, byte> _announcedLoads = new();
-    private readonly ConcurrentDictionary<ProjectHost, ProjectXaml> _projectXaml = new();
-    private readonly ConcurrentDictionary<string, CrossFileFacts> _crossFileFacts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IRequestHandler> _requests;
+    private readonly Dictionary<string, INotificationHandler> _notifications;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _inFlight = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _shutdown = new();
-    private bool _clientSupportsProgress;
-    private InlayHintOptions _hintOptions = InlayHintOptions.Default;
-    private int _nextRequestId;
 
     public LspServer(Stream input, Stream output)
     {
         _rpc = new JsonRpc(input, output);
-        _workspace.ProjectUpdated += OnProjectUpdated;
-        _workspace.CodeRenamed = FollowCodeRenamesAsync;
+        _client = new LspClient(_rpc);
+        var progress = new ProjectLoadProgress(_client, _session);
+        var documents = new Documents(_workspace, progress);
+        var diagnostics = new DiagnosticsPublisher(documents, _client);
+        var targets = new TargetLookup(documents, progress);
+        _workspace.ProjectUpdated += diagnostics.OnProjectUpdated;
+        _workspace.CodeRenamed = new CodeRenameFollower(documents, _client).FollowAsync;
+
+        IRequestHandler[] requests =
+        [
+            new HoverHandler(documents),
+            new DefinitionHandler(documents),
+            new TypeDefinitionHandler(documents),
+            new ImplementationHandler(documents),
+            new ReferencesHandler(documents, targets),
+            new PrepareRenameHandler(targets),
+            new RenameHandler(documents, targets),
+            new CompletionHandler(documents),
+            new CompletionResolveHandler(),
+            new CodeActionHandler(documents),
+            new CodeLensHandler(documents),
+            new ExecuteCommandHandler(_client),
+            new DocumentSymbolHandler(documents),
+            new FoldingRangeHandler(documents),
+            new LinkedEditingRangeHandler(documents),
+            new OnTypeFormattingHandler(documents),
+            new InlayHintHandler(documents, _session),
+            new SemanticTokensHandler(documents),
+            new DocumentColorHandler(documents),
+            new ColorPresentationHandler(),
+        ];
+        INotificationHandler[] notifications =
+        [
+            new DidOpenHandler(documents, diagnostics),
+            new DidChangeHandler(documents, diagnostics),
+            new DidCloseHandler(documents, diagnostics),
+        ];
+        _requests = requests.ToDictionary(h => h.Method, StringComparer.Ordinal);
+        _notifications = notifications.ToDictionary(h => h.Method, StringComparer.Ordinal);
     }
 
     public async Task RunAsync()
@@ -67,27 +82,9 @@ public sealed class LspServer : IDisposable
             var method = (string?)message["method"];
             var id = message["id"]?.DeepClone();
             if (method == null) continue; // A response to one of our requests.
-            if (method == "$/cancelRequest")
-            {
-                // Handled here, not queued: the request it cancels may be running on another thread right now.
-                if (message["params"]?["id"] is { } cancelled && _inFlight.TryGetValue(cancelled.ToJsonString(), out var running)) running.Cancel();
-                continue;
-            }
-            if (id != null)
-            {
-                _ = Task.Run(() => HandleRequestAsync(id, method, message["params"] as JsonObject));
-            }
-            else
-            {
-                try
-                {
-                    HandleNotification(method, message["params"] as JsonObject);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error($"Notification {method} failed", ex);
-                }
-            }
+            var parameters = message["params"] as JsonObject;
+            if (id != null) _ = Task.Run(() => HandleRequestAsync(id, method, parameters));
+            else HandleNotification(method, parameters);
         }
     }
 
@@ -106,45 +103,26 @@ public sealed class LspServer : IDisposable
             {
                 "initialize" => Initialize(p),
                 "shutdown" => null,
-                "textDocument/hover" => Hover(p!),
-                "textDocument/definition" => Definition(p!),
-                "textDocument/completion" => Completion(p!),
-                "textDocument/documentColor" => DocumentColor(p!),
-                "textDocument/colorPresentation" => ColorPresentation(p!),
-                "textDocument/semanticTokens/full" => SemanticTokens(p!),
-                "textDocument/onTypeFormatting" => OnTypeFormatting(p!),
-                "completionItem/resolve" => ResolveCompletion(p!),
-                "textDocument/inlayHint" => InlayHint(p!),
-                "textDocument/codeAction" => CodeAction(p!),
-                "textDocument/documentSymbol" => DocumentSymbols(p!),
-                "textDocument/foldingRange" => FoldingRanges(p!),
-                "textDocument/linkedEditingRange" => LinkedEditingRange(p!),
-                "textDocument/typeDefinition" => ToLocations(p!, Navigation.TypeDefinition),
-                "textDocument/implementation" => ToLocations(p!, Navigation.Implementation),
-                "textDocument/codeLens" => CodeLens(p!),
-                "workspace/executeCommand" => await ExecuteCommandAsync(p!).ConfigureAwait(false),
-                "textDocument/references" => await ReferencesAsync(p!).ConfigureAwait(false),
-                "textDocument/prepareRename" => await PrepareRenameAsync(p!).ConfigureAwait(false),
-                "textDocument/rename" => await RenameAsync(p!).ConfigureAwait(false),
-                _ => throw new MethodNotFoundException(method),
+                _ when _requests.TryGetValue(method, out var handler) => await handler.HandleAsync(p ?? [], cts.Token).ConfigureAwait(false),
+                _ => throw new UnknownMethodException(method),
             };
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            error = RequestCancelled;
+            error = ErrorCodes.Error(ErrorCodes.RequestCancelled, "Request cancelled");
         }
-        catch (MethodNotFoundException)
+        catch (UnknownMethodException)
         {
-            error = new JsonObject { ["code"] = -32601, ["message"] = $"Method not found: {method}" };
+            error = ErrorCodes.Error(ErrorCodes.MethodNotFound, $"Method not found: {method}");
         }
         catch (InvalidParamsException ex)
         {
-            error = new JsonObject { ["code"] = -32602, ["message"] = ex.Message };
+            error = ErrorCodes.Error(ErrorCodes.InvalidParams, ex.Message);
         }
         catch (Exception ex)
         {
             Log.Error($"Request {method} failed", ex);
-            error = new JsonObject { ["code"] = -32603, ["message"] = ex.Message };
+            error = ErrorCodes.Error(ErrorCodes.InternalError, ex.Message);
         }
         finally
         {
@@ -153,831 +131,53 @@ public sealed class LspServer : IDisposable
         if (error == null && cts.IsCancellationRequested)
         {
             result = null;
-            error = RequestCancelled;
+            error = ErrorCodes.Error(ErrorCodes.RequestCancelled, "Request cancelled");
         }
-        var response = new JsonObject { ["id"] = id };
-        if (error != null) response["error"] = error;
-        else response["result"] = result;
-        await _rpc.SendAsync(response).ConfigureAwait(false);
+        await _client.RespondAsync(id, result, error).ConfigureAwait(false);
     }
 
-    private static JsonObject RequestCancelled => new() { ["code"] = -32800, ["message"] = "Request cancelled" };
+    /// <summary>No handler serves the method (answered with -32601). Private, so nothing a handler calls can throw it.</summary>
+    private sealed class UnknownMethodException(string method) : Exception(method);
 
-    private sealed class MethodNotFoundException(string method) : Exception(method);
-
-    /// <summary>The request was understood but its arguments cannot be used (an invalid new name): reported as JSON-RPC -32602.</summary>
-    private sealed class InvalidParamsException(string message) : Exception(message);
-
+    /// <summary>Notifications run on the read loop, in order, so a didChange is applied before any later request reads the text.</summary>
     private void HandleNotification(string method, JsonObject? p)
     {
-        switch (method)
+        try
         {
-            case "initialized":
-                break;
-            case "exit":
-                _shutdown.Cancel();
-                break;
-            case "textDocument/didOpen":
+            switch (method)
             {
-                var td = p!["textDocument"]!;
-                var uri = (string)td["uri"]!;
-                var doc = new OpenDocument { Uri = uri, Path = UriToPath(uri), Text = (string?)td["text"] ?? "", Version = (int?)td["version"] ?? 0 };
-                _documents[uri] = doc;
-                Schedule(doc, delayMs: 0);
-                break;
+                case "exit":
+                    _shutdown.Cancel();
+                    break;
+                case "$/cancelRequest":
+                    // The request it cancels may be running on another thread right now.
+                    if (p?["id"] is { } cancelled && _inFlight.TryGetValue(cancelled.ToJsonString(), out var running)) running.Cancel();
+                    break;
+                default:
+                    if (p != null && _notifications.TryGetValue(method, out var handler)) handler.Handle(p);
+                    break;
             }
-            case "textDocument/didChange":
-            {
-                var uri = (string)p!["textDocument"]!["uri"]!;
-                if (!_documents.TryGetValue(uri, out var doc)) break;
-                lock (doc)
-                {
-                    doc.Version = (int?)p["textDocument"]!["version"] ?? doc.Version + 1;
-                    doc.Text = ApplyChanges(doc.Text, p["contentChanges"]!.AsArray());
-                }
-                // Other open files are re-checked only if this edit changed what they depend on (see Schedule).
-                Schedule(doc, delayMs: 150, notifyOthers: true);
-                break;
-            }
-            case "textDocument/didClose":
-            {
-                var uri = (string)p!["textDocument"]!["uri"]!;
-                if (_documents.TryRemove(uri, out var doc))
-                {
-                    lock (doc) doc.Pending?.Cancel();
-                }
-                _ = PublishAsync(uri, null, []);
-                break;
-            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Notification {method} failed", ex);
         }
     }
 
     private JsonObject Initialize(JsonObject? p)
     {
-        _clientSupportsProgress = (bool?)p?["capabilities"]?["window"]?["workDoneProgress"] ?? false;
-        if ((bool?)p?["initializationOptions"]?["verbose"] == true) Log.Verbose = true;
-        _hintOptions = new InlayHintOptions(BindingSource: (bool?)p?["initializationOptions"]?["inlayHints"]?["bindingSource"] ?? true);
-        Log.Info($"axaml-ls {typeof(LspServer).Assembly.GetName().Version} started (client: {(string?)p?["clientInfo"]?["name"] ?? "?"})");
+        _session.Initialize(p);
+        if (_session.Options.Verbose) Log.Verbose = true;
+        Log.Info($"axaml-ls {typeof(LspServer).Assembly.GetName().Version} started (client: {_session.Client.ClientName})");
+        var capabilities = new JsonObject();
+        foreach (var handler in _notifications.Values) handler.Advertise(capabilities);
+        foreach (var handler in _requests.Values) handler.Advertise(capabilities);
         return new JsonObject
         {
-            ["capabilities"] = new JsonObject
-            {
-                // Incremental: the editor sends only the edited range, not the whole file on every keystroke.
-                ["textDocumentSync"] = new JsonObject { ["openClose"] = true, ["change"] = 2 },
-                ["hoverProvider"] = true,
-                ["definitionProvider"] = true,
-                ["referencesProvider"] = true,
-                ["documentSymbolProvider"] = true,
-                ["foldingRangeProvider"] = true,
-                ["typeDefinitionProvider"] = true,
-                ["implementationProvider"] = true,
-                ["codeLensProvider"] = new JsonObject { ["resolveProvider"] = false },
-                ["executeCommandProvider"] = new JsonObject { ["commands"] = new JsonArray(OpenFileCommand) },
-                ["codeActionProvider"] = new JsonObject { ["codeActionKinds"] = new JsonArray("quickfix") },
-                ["renameProvider"] = new JsonObject { ["prepareProvider"] = true },
-                ["linkedEditingRangeProvider"] = true,
-                ["colorProvider"] = true,
-                ["inlayHintProvider"] = true,
-                ["documentOnTypeFormattingProvider"] = new JsonObject { ["firstTriggerCharacter"] = "/" },
-                ["semanticTokensProvider"] = new JsonObject
-                {
-                    ["legend"] = new JsonObject
-                    {
-                        ["tokenTypes"] = new JsonArray(TokenTypes.Select(t => (JsonNode)t).ToArray()),
-                        ["tokenModifiers"] = new JsonArray(),
-                    },
-                    ["full"] = true,
-                },
-                ["completionProvider"] = new JsonObject
-                {
-                    ["triggerCharacters"] = new JsonArray("<", ".", "{", " ", ":", "$", "#", "=", "\"", ",", "/", "["),
-                    ["resolveProvider"] = true,
-                },
-            },
+            ["capabilities"] = capabilities,
             ["serverInfo"] = new JsonObject { ["name"] = "axaml-ls", ["version"] = typeof(LspServer).Assembly.GetName().Version?.ToString(3) },
         };
     }
-
-    // ---------------------------------------------------------------- analysis & diagnostics
-
-    /// <summary>
-    /// Applies didChange content changes in order: a change with a range replaces that range (incremental sync),
-    /// one without replaces the whole text.
-    /// </summary>
-    internal static string ApplyChanges(string text, JsonArray changes)
-    {
-        foreach (var change in changes)
-        {
-            if (change == null) continue;
-            var newText = (string?)change["text"] ?? "";
-            if (change["range"] is not JsonObject range)
-            {
-                text = newText;
-                continue;
-            }
-            var lines = new LineIndex(text);
-            var start = lines.GetOffset((int)range["start"]!["line"]!, (int)range["start"]!["character"]!);
-            var end = Math.Max(start, lines.GetOffset((int)range["end"]!["line"]!, (int)range["end"]!["character"]!));
-            text = string.Concat(text.AsSpan(0, start), newText, text.AsSpan(end));
-        }
-        return text;
-    }
-
-    private void Schedule(OpenDocument doc, int delayMs, bool notifyOthers = false)
-    {
-        CancellationTokenSource cts;
-        lock (doc)
-        {
-            doc.Pending?.Cancel();
-            doc.Pending = cts = new CancellationTokenSource();
-        }
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                if (delayMs > 0) await Task.Delay(delayMs, cts.Token).ConfigureAwait(false);
-                var (version, analyzer, lines) = Analyze(doc);
-                if (cts.IsCancellationRequested) return;
-                var diagnostics = new JsonArray();
-                foreach (var (d, unnecessary) in CollectDiagnostics(analyzer))
-                {
-                    var lsp = ToLsp(d, lines);
-                    if (unnecessary) lsp["tags"] = new JsonArray(1); // Unnecessary: the editor fades it
-                    diagnostics.Add(lsp);
-                }
-                if (cts.IsCancellationRequested) return;
-                // Unchanged since the last publish (another file's edit, a .cs save that didn't matter): don't send it again.
-                // A new project snapshot always publishes once, so the first result after loading is confirmed.
-                var json = diagnostics.ToJsonString();
-                var project = analyzer.Project;
-                lock (doc)
-                {
-                    if (doc.LastPublished is { } last && last.Json == json && ReferenceEquals(last.Project, project)) json = null;
-                    else doc.LastPublished = (json, project);
-                }
-                if (json != null) await PublishAsync(doc.Uri, version, diagnostics).ConfigureAwait(false);
-                if (notifyOthers && CrossFileFactsChanged(doc, analyzer)) ScheduleOthers(doc);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"Analysis of {doc.Path} failed", ex);
-            }
-        });
-    }
-
-    /// <summary>
-    /// Whether this document's edit changed something other files' diagnostics read: classes, selectors, template parts,
-    /// keys set in code (one <see cref="ProjectStyles"/> object while those stay the same) or the set of resource keys.
-    /// Typing inside a value or moving lines changes neither, so the other open files are not re-checked.
-    /// </summary>
-    private bool CrossFileFactsChanged(OpenDocument doc, XamlAnalyzer analyzer)
-    {
-        var root = analyzer.ProjectDirectory ?? System.IO.Path.GetDirectoryName(doc.Path) ?? "";
-        var styles = analyzer.StyleProvider?.Invoke();
-        var keys = analyzer.ResourceProvider?.Invoke() is { } resources ? resources.Select(r => r.Key).ToHashSet(StringComparer.Ordinal) : null;
-        var now = new CrossFileFacts(styles, keys);
-        var before = _crossFileFacts.GetValueOrDefault(root);
-        _crossFileFacts[root] = now;
-        if (before == null) return true;
-        return !ReferenceEquals(before.Styles, styles) ||
-               (before.Keys == null) != (keys == null) || before.Keys != null && !before.Keys.SetEquals(keys!);
-    }
-
-    private void ScheduleOthers(OpenDocument changed)
-    {
-        foreach (var other in _documents.Values)
-        {
-            if (other != changed) Schedule(other, delayMs: 400);
-        }
-    }
-
-    /// <summary>
-    /// Everything reported for a document: the analyzer's own diagnostics plus those that need other files (assets, resources,
-    /// selector classes), which are added after analysis because the providers are set after it.
-    /// </summary>
-    internal static List<(XamlDiagnostic Diagnostic, bool Unnecessary)> CollectDiagnostics(XamlAnalyzer analyzer)
-    {
-        var all = new List<(XamlDiagnostic, bool)>();
-        all.AddRange(analyzer.Result.Diagnostics.Select(d => (d, false)));
-        all.AddRange(Features.AssetDiagnostics(analyzer).Select(d => (d, false)));
-        all.AddRange(ResourceCheck.Unknown(analyzer).Select(d => (d, false)));
-        all.AddRange(Selectors.Validate(analyzer).Select(d => (d, false)));
-        if (analyzer.StyleProvider?.Invoke() is { } styles)
-            all.AddRange(Selectors.UnusedClasses(analyzer.Result.Doc, styles.UsedClasses).Select(d => (d, true)));
-        return all;
-    }
-
-    private (int Version, XamlAnalyzer Analyzer, LineIndex Lines) Analyze(OpenDocument doc)
-    {
-        var host = _workspace.GetHostFor(doc.Path);
-        if (host != null) AnnounceLoad(host);
-        var project = host?.Current;
-        // Fast path without the lock: this version was already analyzed.
-        var cached = doc.Cached;
-        int current;
-        lock (doc) current = doc.Version;
-        if (cached != null && cached.Version == current && ReferenceEquals(cached.Project, project)) return (cached.Version, cached.Analyzer, cached.Lines);
-
-        lock (doc.AnalyzeLock)
-        {
-            string text;
-            int version;
-            lock (doc)
-            {
-                text = doc.Text;
-                version = doc.Version;
-            }
-            cached = doc.Cached; // someone may have finished it while we waited
-            if (cached != null && cached.Version == version && ReferenceEquals(cached.Project, project)) return (version, cached.Analyzer, cached.Lines);
-
-            var analyzer = XamlAnalyzer.Analyze(text, project, host?.CompiledBindingsDefault ?? false);
-            ProjectXaml.Wire(analyzer, doc.Path, host, OpenBuffers,
-                host == null ? null : () => _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, OpenBuffers()));
-            var lines = new LineIndex(text);
-            doc.Cached = new DocumentAnalysis(version, project, analyzer, lines);
-            Log.Debug($"Analyzed {Path.GetFileName(doc.Path)} v{version}: {analyzer.Result.Diagnostics.Count} diagnostics (project {(project == null ? "not loaded" : "loaded")})");
-            return (version, analyzer, lines);
-        }
-    }
-
-    /// <summary>The current text, its line index and parse tree: from the last analysis when it is of this version, else freshly made.</summary>
-    private static (string Text, LineIndex Lines, Xaml.XmlDoc? Doc) CurrentText(OpenDocument doc)
-    {
-        string text;
-        int version;
-        lock (doc)
-        {
-            text = doc.Text;
-            version = doc.Version;
-        }
-        if (doc.Cached is { } c && c.Version == version) return (text, c.Lines, c.Analyzer.Result.Doc);
-        return (text, new LineIndex(text), null);
-    }
-
-    /// <summary>Unsaved editor contents by file path (they win over the disk when indexing resources).</summary>
-    private IReadOnlyDictionary<string, string> OpenBuffers()
-    {
-        var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var d in _documents.Values)
-        {
-            lock (d) map[d.Path] = d.Text;
-        }
-        return map;
-    }
-
-    private void OnProjectUpdated(ProjectHost host)
-    {
-        foreach (var doc in _documents.Values)
-        {
-            if (_workspace.GetHostFor(doc.Path, startLoading: false) == host) Schedule(doc, delayMs: 0);
-        }
-    }
-
-    /// <summary>
-    /// A saved .cs file renamed declarations (the C# server's rename, or by hand): make the project's AXAML use the new names.
-    /// Called before the project is rebuilt, so the AXAML is still analysed against the old code and finds the old names.
-    /// Open files change through workspace/applyEdit (undoable, left unsaved); closed ones are rewritten on disk, but only
-    /// when the disk still holds the text that was analysed.
-    /// </summary>
-    private async Task FollowCodeRenamesAsync(ProjectHost host, IReadOnlyList<CodeRename> renames)
-    {
-        var buffers = OpenBuffers();
-        var files = _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, buffers);
-        var edits = CodeRenames.AxamlEdits(renames, files);
-        if (edits.Count == 0) return;
-
-        var byPath = files.ToDictionary(f => f.Path, StringComparer.Ordinal);
-        var openEdits = new List<FileEdit>();
-        var applied = 0;
-        foreach (var group in edits.GroupBy(e => e.Path, StringComparer.Ordinal))
-        {
-            if (buffers.ContainsKey(group.Key))
-            {
-                openEdits.AddRange(group);
-                continue;
-            }
-            try
-            {
-                var bytes = await File.ReadAllBytesAsync(group.Key).ConfigureAwait(false);
-                var bom = bytes is [0xEF, 0xBB, 0xBF, ..];
-                var disk = new System.Text.UTF8Encoding(false).GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
-                if (disk != byPath[group.Key].Text) continue; // changed since it was analysed: leave it
-                await File.WriteAllTextAsync(group.Key, Edits.Apply(disk, group), new System.Text.UTF8Encoding(bom)).ConfigureAwait(false);
-                applied += group.Count();
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"Could not update {group.Key} after a rename", ex);
-            }
-        }
-        if (openEdits.Count > 0)
-        {
-            await _rpc.SendAsync(new JsonObject
-            {
-                ["id"] = $"axaml-{Interlocked.Increment(ref _nextRequestId)}",
-                ["method"] = "workspace/applyEdit",
-                ["params"] = new JsonObject
-                {
-                    ["label"] = "Follow C# rename",
-                    ["edit"] = Edits.ToWorkspaceEdit(openEdits, path => (byPath[path].Text, byPath[path].Lines)),
-                },
-            }).ConfigureAwait(false);
-            applied += openEdits.Count;
-        }
-        if (applied == 0) return;
-
-        var names = string.Join(", ", renames.Where(r => edits.Any(e => e.NewText == r.NewName)).Select(r => $"{r.OldSymbol.Name} → {r.NewName}").Distinct());
-        await _rpc.SendAsync(new JsonObject
-        {
-            ["method"] = "window/showMessage",
-            ["params"] = new JsonObject { ["type"] = 3, ["message"] = $"axaml-ls: renamed {names} in {applied} AXAML place{(applied == 1 ? "" : "s")}." },
-        }).ConfigureAwait(false);
-    }
-
-    /// <summary>Shows "Loading Orion_POS.csproj" in Zed's status bar until the first load finishes.</summary>
-    private void AnnounceLoad(ProjectHost host)
-    {
-        if (!_announcedLoads.TryAdd(host, 0) || host.Current != null || !_clientSupportsProgress) return;
-        var token = $"axaml-load-{Path.GetFileNameWithoutExtension(host.ProjectPath)}";
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var id = Interlocked.Increment(ref _nextRequestId);
-                await _rpc.SendAsync(new JsonObject { ["id"] = $"axaml-{id}", ["method"] = "window/workDoneProgress/create", ["params"] = new JsonObject { ["token"] = token } });
-                await _rpc.SendAsync(Progress(token, new JsonObject { ["kind"] = "begin", ["title"] = $"Loading {Path.GetFileName(host.ProjectPath)}" }));
-                await host.EnsureLoadedAsync();
-                var end = host.LoadError == null ? "Project loaded" : $"Project failed to load: {host.LoadError}";
-                await _rpc.SendAsync(Progress(token, new JsonObject { ["kind"] = "end", ["message"] = end }));
-            }
-            catch (Exception ex)
-            {
-                Log.Error("Progress reporting failed", ex);
-            }
-        });
-    }
-
-    private static JsonObject Progress(string token, JsonObject value) =>
-        new() { ["method"] = "$/progress", ["params"] = new JsonObject { ["token"] = token, ["value"] = value } };
-
-    private Task PublishAsync(string uri, int? version, JsonArray diagnostics)
-    {
-        var p = new JsonObject { ["uri"] = uri, ["diagnostics"] = diagnostics };
-        if (version != null) p["version"] = version;
-        return _rpc.SendAsync(new JsonObject { ["method"] = "textDocument/publishDiagnostics", ["params"] = p });
-    }
-
-    private static JsonObject ToLsp(XamlDiagnostic d, LineIndex lines) => new()
-    {
-        ["range"] = Range(lines, d.Start, d.End),
-        ["severity"] = (int)d.Severity,
-        ["code"] = d.Code,
-        ["source"] = "axaml",
-        ["message"] = d.Message,
-    };
-
-    // ---------------------------------------------------------------- requests
-
-    private (OpenDocument Doc, XamlAnalyzer Analyzer, LineIndex Lines, int Offset)? Locate(JsonObject p)
-    {
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if (!_documents.TryGetValue(uri, out var doc)) return null;
-        var (_, analyzer, lines) = Analyze(doc);
-        var pos = p["position"]!;
-        var offset = lines.GetOffset((int)pos["line"]!, (int)pos["character"]!);
-        return (doc, analyzer, lines, offset);
-    }
-
-    /// <summary>What a find-references or rename request works with: the target under the cursor, the project's files, its host.</summary>
-    private sealed record TargetContext(OpenDocument Doc, XamlFile Origin, IReadOnlyList<XamlFile> Files, ProjectHost? Host, TargetAt Found);
-
-    private async Task<TargetContext?> TargetContextAsync(JsonObject p)
-    {
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if (!_documents.TryGetValue(uri, out var doc)) return null;
-        var host = _workspace.GetHostFor(doc.Path);
-        if (host != null)
-        {
-            AnnounceLoad(host);
-            await host.EnsureLoadedAsync().ConfigureAwait(false);
-        }
-        var (_, analyzer, lines) = Analyze(doc);
-        var pos = p["position"]!;
-        var offset = lines.GetOffset((int)pos["line"]!, (int)pos["character"]!);
-        if (Targets.Find(analyzer, offset) is not { } found) return null;
-        var origin = new XamlFile(doc.Path, analyzer.Result.Doc.Text, analyzer, lines);
-        IReadOnlyList<XamlFile> files = host?.Current != null ? _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, OpenBuffers()) : [origin];
-        return new TargetContext(doc, origin, files, host, found);
-    }
-
-    /// <summary>Text of a file as edits and locations must see it: the open buffer if there is one, else the disk.</summary>
-    private Func<string, (string Text, LineIndex Lines)> TextProvider()
-    {
-        var open = OpenBuffers();
-        var cache = new Dictionary<string, (string, LineIndex)>(StringComparer.Ordinal);
-        return path =>
-        {
-            if (cache.TryGetValue(path, out var hit)) return hit;
-            var text = open.TryGetValue(path, out var t) ? t : File.ReadAllText(path);
-            return cache[path] = (text, new LineIndex(text));
-        };
-    }
-
-    /// <summary>The outline: hierarchical DocumentSymbols, one per element.</summary>
-    private JsonNode? DocumentSymbols(JsonObject p)
-    {
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if (!_documents.TryGetValue(uri, out var doc)) return new JsonArray();
-        var (_, analyzer, lines) = Analyze(doc);
-        JsonArray Convert(IEnumerable<OutlineSymbol> symbols)
-        {
-            var array = new JsonArray();
-            foreach (var s in symbols)
-            {
-                var node = new JsonObject
-                {
-                    ["name"] = s.Name,
-                    ["kind"] = s.Kind,
-                    ["range"] = Range(lines, s.Start, s.End),
-                    ["selectionRange"] = Range(lines, s.SelectionStart, s.SelectionEnd),
-                    ["children"] = Convert(s.Children),
-                };
-                if (s.Detail != null) node["detail"] = s.Detail;
-                array.Add(node);
-            }
-            return array;
-        }
-        return Convert(Outline.Build(analyzer));
-    }
-
-    /// <summary>Quick fixes for the diagnostics at the requested range, recomputed here rather than taken from the client's copies.</summary>
-    private JsonNode? CodeAction(JsonObject p)
-    {
-        var actions = new JsonArray();
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if (!_documents.TryGetValue(uri, out var doc)) return actions;
-        var (_, analyzer, lines) = Analyze(doc);
-        var range = p["range"]!;
-        var start = lines.GetOffset((int)range["start"]!["line"]!, (int)range["start"]!["character"]!);
-        var end = lines.GetOffset((int)range["end"]!["line"]!, (int)range["end"]!["character"]!);
-        var wanted = (p["context"]?["diagnostics"] as JsonArray)?.Select(d => (string?)d?["code"]).OfType<string>().ToHashSet() ?? [];
-        var textOf = TextProvider();
-        foreach (var (d, _) in CollectDiagnostics(analyzer))
-        {
-            if (d.Start > end || d.End < start || wanted.Count > 0 && !wanted.Contains(d.Code)) continue;
-            foreach (var fix in QuickFixes.For(analyzer, d))
-            {
-                try
-                {
-                    var action = new JsonObject
-                    {
-                        ["title"] = fix.Title,
-                        ["kind"] = "quickfix",
-                        ["diagnostics"] = new JsonArray(ToLsp(d, lines)),
-                        ["edit"] = Edits.ToWorkspaceEdit(fix.Edits, textOf),
-                    };
-                    if (fix.Preferred) action["isPreferred"] = true;
-                    actions.Add(action);
-                }
-                catch (IOException ex)
-                {
-                    Log.Error($"Quick fix '{fix.Title}' skipped", ex);
-                }
-            }
-        }
-        return actions;
-    }
-
-    private async Task<JsonNode?> ReferencesAsync(JsonObject p)
-    {
-        var array = new JsonArray();
-        if (await TargetContextAsync(p).ConfigureAwait(false) is not { } ctx) return array;
-        var includeDeclaration = (bool?)p["context"]?["includeDeclaration"] ?? true;
-        var textOf = TextProvider();
-        foreach (var o in await Targets.OccurrencesAsync(ctx.Found.Target, ctx.Origin, ctx.Files, ctx.Host).ConfigureAwait(false))
-        {
-            if (o.IsDeclaration && !includeDeclaration) continue;
-            array.Add(new JsonObject { ["uri"] = PathToUri(o.Path), ["range"] = Edits.Range(textOf(o.Path).Lines, o.Start, o.End) });
-        }
-        return array;
-    }
-
-    private async Task<JsonNode?> PrepareRenameAsync(JsonObject p)
-    {
-        if (await TargetContextAsync(p).ConfigureAwait(false) is not { } ctx || !Rename.CanRename(ctx.Found.Target)) return null;
-        return new JsonObject
-        {
-            ["range"] = Edits.Range(ctx.Origin.Lines, ctx.Found.Start, ctx.Found.End),
-            ["placeholder"] = ctx.Origin.Text[ctx.Found.Start..ctx.Found.End],
-        };
-    }
-
-    private async Task<JsonNode?> RenameAsync(JsonObject p)
-    {
-        var newName = (string?)p["newName"] ?? "";
-        if (await TargetContextAsync(p).ConfigureAwait(false) is not { } ctx) return null;
-        if (!Rename.CanRename(ctx.Found.Target)) throw new InvalidParamsException("This name is declared in a library and cannot be renamed here.");
-        var result = await Rename.ComputeAsync(ctx.Found.Target, newName, ctx.Origin, ctx.Files, ctx.Host).ConfigureAwait(false);
-        if (result.Error != null) throw new InvalidParamsException(result.Error);
-        var projectDir = ctx.Host?.ProjectDirectory ?? ctx.Origin.Analyzer.ProjectDirectory;
-        var edits = projectDir == null ? result.Edits : result.Edits.Where(e => e.Path.StartsWith(projectDir + Path.DirectorySeparatorChar, StringComparison.Ordinal)).ToList();
-        return Edits.ToWorkspaceEdit(edits, TextProvider());
-    }
-
-    private JsonNode? Hover(JsonObject p)
-    {
-        if (Locate(p) is not { } at) return null;
-        var hover = Features.Hover(at.Analyzer, at.Offset);
-        if (hover == null) return null;
-        return new JsonObject
-        {
-            ["contents"] = new JsonObject { ["kind"] = "markdown", ["value"] = hover.Markdown },
-            ["range"] = Range(at.Lines, hover.Start, hover.End),
-        };
-    }
-
-    private JsonNode? Definition(JsonObject p) => ToLocations(p, Features.Definition);
-
-    /// <summary>Runs a "where is it" query at the cursor and answers with LSP locations.</summary>
-    private JsonNode? ToLocations(JsonObject p, Func<XamlAnalyzer, int, List<DefinitionTarget>> query)
-    {
-        if (Locate(p) is not { } at) return null;
-        var array = new JsonArray();
-        foreach (var target in query(at.Analyzer, at.Offset)) array.Add(Location(target, at.Doc.Uri, at.Lines));
-        return array;
-    }
-
-    private static JsonObject Location(DefinitionTarget target, string documentUri, LineIndex lines)
-    {
-        if (target.DocumentOffset is { } off) return new JsonObject { ["uri"] = documentUri, ["range"] = Range(lines, off, off) };
-        return new JsonObject
-        {
-            ["uri"] = PathToUri(target.FilePath!),
-            ["range"] = new JsonObject
-            {
-                ["start"] = new JsonObject { ["line"] = target.StartLine, ["character"] = target.StartCharacter },
-                ["end"] = new JsonObject { ["line"] = target.EndLine, ["character"] = target.EndCharacter },
-            },
-        };
-    }
-
-    /// <summary>The start and end tag names of the element under the cursor, edited together.</summary>
-    private JsonNode? LinkedEditingRange(JsonObject p)
-    {
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if (!_documents.TryGetValue(uri, out var doc)) return null;
-        var (text, lines, parsed) = CurrentText(doc);
-        var pos = p["position"]!;
-        var offset = lines.GetOffset((int)pos["line"]!, (int)pos["character"]!);
-        if (LinkedTags.At(parsed ?? Xaml.XmlDoc.Parse(text), text, offset) is not var (open, close)) return null;
-        return new JsonObject
-        {
-            ["ranges"] = new JsonArray(Edits.Range(lines, open.Start, open.End), Edits.Range(lines, close.Start, close.End)),
-            ["wordPattern"] = @"[A-Za-z_][\w.:-]*",
-        };
-    }
-
-    private JsonNode? FoldingRanges(JsonObject p)
-    {
-        var uri = (string)p["textDocument"]!["uri"]!;
-        var array = new JsonArray();
-        if (!_documents.TryGetValue(uri, out var doc)) return array;
-        var (_, analyzer, lines) = Analyze(doc);
-        foreach (var r in Folding.Compute(analyzer, lines))
-        {
-            var node = new JsonObject { ["startLine"] = r.StartLine, ["endLine"] = r.EndLine };
-            if (r.Kind != null) node["kind"] = r.Kind;
-            array.Add(node);
-        }
-        return array;
-    }
-
-    /// <summary>Lenses on the root element that jump to the view model and to the code-behind (Zed shows them with "code_lens": "on").</summary>
-    private JsonNode? CodeLens(JsonObject p)
-    {
-        var array = new JsonArray();
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if (!_documents.TryGetValue(uri, out var doc)) return array;
-        var (_, analyzer, lines) = Analyze(doc);
-        if (analyzer.Result.Doc.Root is not { } root) return array;
-        void Add(string title, DefinitionTarget? target)
-        {
-            if (target?.FilePath == null) return;
-            array.Add(new JsonObject
-            {
-                ["range"] = Range(lines, root.NameStart, root.NameEnd),
-                ["command"] = new JsonObject
-                {
-                    ["title"] = title,
-                    ["command"] = OpenFileCommand,
-                    ["arguments"] = new JsonArray(PathToUri(target.FilePath), target.StartLine, target.StartCharacter),
-                },
-            });
-        }
-        var viewModel = Navigation.ViewModel(analyzer).FirstOrDefault();
-        if (viewModel != null && analyzer.ScopeAt(root).DataType is { } dataType) Add($"→ {dataType.Name}", viewModel);
-        Add("→ code-behind", Navigation.CodeBehind(analyzer).FirstOrDefault());
-        return array;
-    }
-
-    private const string OpenFileCommand = "axaml.openFile";
-
-    /// <summary>The lens command: asks the editor to open a file at a line (window/showDocument).</summary>
-    private async Task<JsonNode?> ExecuteCommandAsync(JsonObject p)
-    {
-        if ((string?)p["command"] != OpenFileCommand || p["arguments"] is not JsonArray { Count: >= 1 } args) return null;
-        var line = args.Count > 1 ? (int?)args[1] ?? 0 : 0;
-        var character = args.Count > 2 ? (int?)args[2] ?? 0 : 0;
-        var position = new JsonObject { ["line"] = line, ["character"] = character };
-        await _rpc.SendAsync(new JsonObject
-        {
-            ["id"] = $"axaml-{Interlocked.Increment(ref _nextRequestId)}",
-            ["method"] = "window/showDocument",
-            ["params"] = new JsonObject
-            {
-                ["uri"] = (string?)args[0],
-                ["takeFocus"] = true,
-                ["selection"] = new JsonObject { ["start"] = position.DeepClone(), ["end"] = position.DeepClone() },
-            },
-        }).ConfigureAwait(false);
-        return null;
-    }
-
-    private JsonNode? Completion(JsonObject p)
-    {
-        if (Locate(p) is not { } at) return null;
-        var items = new JsonArray();
-        var incomplete = false;
-        foreach (var c in Features.Complete(at.Analyzer, at.Offset))
-        {
-            var item = new JsonObject
-            {
-                ["label"] = c.Label,
-                ["kind"] = (int)c.Kind,
-                ["textEdit"] = new JsonObject { ["range"] = Range(at.Lines, c.ReplaceStart, Math.Max(c.ReplaceEnd, c.ReplaceStart)), ["newText"] = c.InsertText },
-                ["filterText"] = c.Label,
-            };
-            if (c.Detail != null) item["detail"] = c.Detail;
-            if (c.ColorHex != null)
-            {
-                // LSP convention for swatches: kind Color with the color as plain-string documentation.
-                item["kind"] = 16;
-                item["documentation"] = c.ColorHex;
-            }
-            else if (c.Documentation != null)
-            {
-                item["documentation"] = new JsonObject { ["kind"] = "markdown", ["value"] = c.Documentation };
-            }
-            if (c.IsSnippet) item["insertTextFormat"] = 2;
-            if (c.SortText != null) item["sortText"] = c.SortText;
-            if (c.PreviewPath != null) item["data"] = new JsonObject { ["preview"] = c.PreviewPath, ["root"] = at.Analyzer.ProjectDirectory };
-            if (c.Kind is Features.ItemKind.File or Features.ItemKind.Folder) incomplete = true;
-            items.Add(item);
-        }
-        // File lists depend on the typed name (deep matches), so ask again as it changes.
-        return new JsonObject { ["isIncomplete"] = incomplete, ["items"] = items };
-    }
-
-    /// <summary>Fills in a file's preview only for the item the editor highlights (images are big as data: URIs).</summary>
-    private static JsonNode ResolveCompletion(JsonObject item)
-    {
-        var result = (JsonObject)item.DeepClone();
-        if ((string?)item["data"]?["preview"] is { } path && Assets.PreviewMarkdown(path, (string?)item["data"]?["root"]) is { } markdown)
-            result["documentation"] = new JsonObject { ["kind"] = "markdown", ["value"] = markdown };
-        return result;
-    }
-
-    /// <summary>Names of the parts of Thickness / CornerRadius / BoxShadow values, and implicit markup keys (Path=).</summary>
-    private JsonNode? InlayHint(JsonObject p)
-    {
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if (!_documents.TryGetValue(uri, out var doc)) return new JsonArray();
-        var (_, analyzer, lines) = Analyze(doc);
-        var range = p["range"]!;
-        var start = lines.GetOffset((int)range["start"]!["line"]!, (int)range["start"]!["character"]!);
-        var end = lines.GetOffset((int)range["end"]!["line"]!, (int)range["end"]!["character"]!);
-        var array = new JsonArray();
-        foreach (var h in Features.InlayHintsIn(analyzer, start, end, _hintOptions))
-        {
-            var (line, ch) = lines.GetPosition(h.Offset);
-            array.Add(new JsonObject
-            {
-                ["position"] = new JsonObject { ["line"] = line, ["character"] = ch },
-                ["label"] = h.Label,
-                ["kind"] = h.IsType ? 1 : 2, // Type : Parameter
-                ["paddingRight"] = h.PadRight,
-                ["paddingLeft"] = h.PadLeft,
-            });
-        }
-        return array;
-    }
-
-    private JsonNode? DocumentColor(JsonObject p)
-    {
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if (!_documents.TryGetValue(uri, out var doc)) return new JsonArray();
-        var (_, analyzer, lines) = Analyze(doc);
-        var array = new JsonArray();
-        foreach (var c in Features.DocumentColors(analyzer))
-        {
-            array.Add(new JsonObject
-            {
-                ["range"] = Range(lines, c.Start, c.End),
-                ["color"] = new JsonObject
-                {
-                    ["red"] = (c.Argb >> 16 & 0xFF) / 255.0,
-                    ["green"] = (c.Argb >> 8 & 0xFF) / 255.0,
-                    ["blue"] = (c.Argb & 0xFF) / 255.0,
-                    ["alpha"] = (c.Argb >> 24 & 0xFF) / 255.0,
-                },
-            });
-        }
-        return array;
-    }
-
-    /// <summary>How a picked color is written back: hex, rgb()/rgba() or hsl()/hsla().</summary>
-    private static JsonNode ColorPresentation(JsonObject p)
-    {
-        var c = p["color"]!;
-        static uint Channel(JsonNode? v) => (uint)Math.Clamp(Math.Round(((double?)v ?? 0) * 255), 0, 255);
-        var argb = Channel(c["alpha"]) << 24 | Channel(c["red"]) << 16 | Channel(c["green"]) << 8 | Channel(c["blue"]);
-        var array = new JsonArray();
-        foreach (var text in ColorSupport.Presentations(argb))
-            array.Add(new JsonObject { ["label"] = text, ["textEdit"] = new JsonObject { ["range"] = p["range"]!.DeepClone(), ["newText"] = text } });
-        return array;
-    }
-
-    // ---------------------------------------------------------------- helpers
-
-    /// <summary>Typing '/' before '>' in &lt;Button …&gt;&lt;/Button&gt; makes it &lt;Button …/&gt;: the now-redundant end tag is removed.</summary>
-    private JsonArray? OnTypeFormatting(JsonObject p)
-    {
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if ((string?)p["ch"] != "/" || !_documents.TryGetValue(uri, out var doc)) return null;
-        var (text, lines, _) = CurrentText(doc);
-        var pos = p["position"]!;
-        var offset = lines.GetOffset((int)pos["line"]!, (int)pos["character"]!);
-        var edit = Features.SelfClosingEdit(text, offset);
-        if (edit is not { } e) return null;
-        return new JsonArray(new JsonObject { ["range"] = Range(lines, e.Start, e.End), ["newText"] = "" });
-    }
-
-    // ---------------------------------------------------------------- semantic tokens (style selectors)
-
-    /// <summary>Custom token types; languages/axaml/semantic_token_rules.json maps them to theme styles.</summary>
-    private static readonly string[] TokenTypes = ["selectorType", "styleClass", "styleClassUnused", "pseudoClass", "templateSelector", "selectorName", "nestingSelector"];
-
-    private JsonObject? SemanticTokens(JsonObject p)
-    {
-        var uri = (string)p["textDocument"]!["uri"]!;
-        if (!_documents.TryGetValue(uri, out var doc)) return null;
-        var (_, analyzer, lines) = Analyze(doc);
-        var used = analyzer.StyleProvider?.Invoke()?.UsedClasses;
-        var data = new JsonArray();
-        var (prevLine, prevChar) = (0, 0);
-        foreach (var (token, start, end) in Selectors.DocumentTokens(analyzer.Result.Doc).OrderBy(t => t.Start))
-        {
-            int type = token.Kind switch
-            {
-                SelectorTokenKind.Type => 0,
-                SelectorTokenKind.Class => used == null || used.Contains(token.Text[1..]) ? 1 : 2,
-                SelectorTokenKind.PseudoClass => 3,
-                SelectorTokenKind.Template => 4,
-                SelectorTokenKind.Name => 5,
-                SelectorTokenKind.Nesting => 6,
-                _ => -1,
-            };
-            if (type < 0) continue;
-            var (line, ch) = lines.GetPosition(start);
-            var (endLine, endCh) = lines.GetPosition(end);
-            if (endLine != line || endCh <= ch) continue;
-            data.Add(line - prevLine);
-            data.Add(line == prevLine ? ch - prevChar : ch);
-            data.Add(endCh - ch);
-            data.Add(type);
-            data.Add(0);
-            (prevLine, prevChar) = (line, ch);
-        }
-        return new JsonObject { ["data"] = data };
-    }
-
-    private static JsonObject Range(LineIndex lines, int start, int end)
-    {
-        var (sl, sc) = lines.GetPosition(start);
-        var (el, ec) = lines.GetPosition(end);
-        return new JsonObject
-        {
-            ["start"] = new JsonObject { ["line"] = sl, ["character"] = sc },
-            ["end"] = new JsonObject { ["line"] = el, ["character"] = ec },
-        };
-    }
-
-    public static string UriToPath(string uri) => new Uri(uri).LocalPath;
-
-    public static string PathToUri(string path) => new Uri(path).AbsoluteUri;
 
     public void Dispose()
     {

@@ -20,6 +20,10 @@ public static partial class Rename
     private static partial Regex XamlName();
 
     /// <summary>Types and members from libraries cannot be renamed: only those declared in a source file of the project.</summary>
+    /// <summary>Rename only edits files inside the project folder: edits elsewhere (a library's sources, a sibling project) are dropped.</summary>
+    public static IReadOnlyList<FileEdit> InsideProject(IReadOnlyList<FileEdit> edits, string? projectDirectory) =>
+        projectDirectory == null ? edits : [.. edits.Where(e => e.Path.StartsWith(projectDirectory + Path.DirectorySeparatorChar, StringComparison.Ordinal))];
+
     public static bool CanRename(Target target) =>
         target is not SymbolTarget s || SourceSymbol(s.Symbol) != null;
 
