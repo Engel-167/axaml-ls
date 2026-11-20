@@ -14,7 +14,7 @@ public sealed record XamlFile(string Path, string Text, XamlAnalyzer Analyzer, L
 /// </summary>
 public sealed class ProjectXaml
 {
-    private sealed record Entry(bool FromBuffer, DateTime Stamp, string Text, ProjectSnapshot? Project, XamlFile File);
+    private sealed record Entry(bool FromBuffer, DateTime Stamp, long Generation, string Text, ProjectSnapshot? Project, XamlFile File);
 
     private readonly ConcurrentDictionary<string, Entry> _cache = new(StringComparer.Ordinal);
 
@@ -35,18 +35,9 @@ public sealed class ProjectXaml
     public IReadOnlyList<XamlFile> Files(ProjectHost host, IReadOnlyDictionary<string, string> openBuffers)
     {
         var project = host.Current;
-        var paths = new HashSet<string>(StringComparer.Ordinal);
-        try
-        {
-            foreach (var f in Directory.EnumerateFiles(host.ProjectDirectory, "*.axaml", SearchOption.AllDirectories))
-            {
-                if (!ProjectFiles.IsBuildOutput(f)) paths.Add(f);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Error($"Could not list the .axaml files of {host.ProjectDirectory}", ex);
-        }
+        var index = FileIndex.For(host.ProjectDirectory);
+        var generation = index.Generation;
+        var paths = new HashSet<string>(index.WithExtensions(".axaml"), StringComparer.Ordinal);
         foreach (var k in openBuffers.Keys)
         {
             if (k.EndsWith(".axaml", StringComparison.Ordinal) && k.StartsWith(host.ProjectDirectory, StringComparison.Ordinal)) paths.Add(k);
@@ -57,7 +48,7 @@ public sealed class ProjectXaml
         {
             try
             {
-                if (File(path, project, host, openBuffers) is { } file) result.Add(file);
+                if (File(path, project, host, openBuffers, generation) is { } file) result.Add(file);
             }
             catch (IOException)
             {
@@ -67,24 +58,34 @@ public sealed class ProjectXaml
         return result;
     }
 
-    private XamlFile? File(string path, ProjectSnapshot? project, ProjectHost host, IReadOnlyDictionary<string, string> openBuffers)
+    private XamlFile? File(string path, ProjectSnapshot? project, ProjectHost host, IReadOnlyDictionary<string, string> openBuffers, long generation)
     {
         var fromBuffer = openBuffers.TryGetValue(path, out var text);
+        _cache.TryGetValue(path, out var e);
+        if (e != null && (!ReferenceEquals(e.Project, project) || e.FromBuffer != fromBuffer)) e = null;
         DateTime stamp = default;
-        if (!fromBuffer)
+        if (fromBuffer)
         {
+            if (e != null && string.Equals(e.Text, text, StringComparison.Ordinal)) return e.File;
+        }
+        else
+        {
+            // Nothing changed on disk since this entry was checked: no need to look at the file at all.
+            if (e != null && e.Generation == generation) return e.File;
             if (!System.IO.File.Exists(path)) return null;
             stamp = System.IO.File.GetLastWriteTimeUtc(path);
+            if (e != null && e.Stamp == stamp)
+            {
+                _cache[path] = e with { Generation = generation };
+                return e.File;
+            }
         }
-        if (_cache.TryGetValue(path, out var e) && ReferenceEquals(e.Project, project) && e.FromBuffer == fromBuffer &&
-            (fromBuffer ? string.Equals(e.Text, text, StringComparison.Ordinal) : e.Stamp == stamp))
-            return e.File;
 
         text ??= System.IO.File.ReadAllText(path);
         var analyzer = XamlAnalyzer.Analyze(text, project, host.CompiledBindingsDefault);
         Wire(analyzer, path, host, () => openBuffers, () => Files(host, openBuffers));
         var file = new XamlFile(path, text, analyzer, new LineIndex(text));
-        _cache[path] = new Entry(fromBuffer, stamp, fromBuffer ? text : "", project, file);
+        _cache[path] = new Entry(fromBuffer, stamp, generation, fromBuffer ? text : "", project, file);
         return file;
     }
 }

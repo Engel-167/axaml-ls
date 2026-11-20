@@ -22,37 +22,68 @@ public sealed class ProjectSnapshot
     /// <summary>XML namespace URI → CLR namespaces, from [XmlnsDefinition] attributes.</summary>
     public IReadOnlyDictionary<string, List<string>> Xmlns { get; }
 
-    public ProjectSnapshot(string projectPath, Compilation compilation, bool compiledBindingsDefault)
+    /// <param name="previous">
+    /// The snapshot this one replaces: when the referenced assemblies are the same files (the usual case after a .cs
+    /// edit), its scans of their compiled themes and resources are reused instead of being merged again.
+    /// </param>
+    public ProjectSnapshot(string projectPath, Compilation compilation, bool compiledBindingsDefault, ProjectSnapshot? previous = null)
     {
         ProjectPath = projectPath;
         Compilation = compilation;
         CompiledBindingsDefault = compiledBindingsDefault;
         Xmlns = ReadXmlnsDefinitions(compilation);
+        _referencePaths = compilation.References.OfType<PortableExecutableReference>().Select(r => r.FilePath).OfType<string>()
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}packs{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .ToArray();
+        _referenceStamps = _referencePaths.Select(SafeStamp).ToArray();
+        if (previous != null && previous._referencePaths.AsSpan().SequenceEqual(_referencePaths) && previous._referenceStamps.AsSpan().SequenceEqual(_referenceStamps))
+        {
+            _libraryResources = previous._libraryResources;
+            _themes = previous._themes;
+        }
+        else
+        {
+            _libraryResources = new Lazy<IReadOnlyList<ResourceEntry>>(() => AssemblyResourceScanner.Scan(_referencePaths));
+            _themes = new Lazy<IReadOnlyDictionary<string, ThemeFacts>>(() => ThemeScanner.Scan(_referencePaths));
+        }
+    }
+
+    private readonly string[] _referencePaths;
+    private readonly DateTime[] _referenceStamps;
+
+    private static DateTime SafeStamp(string path)
+    {
+        try
+        {
+            return File.GetLastWriteTimeUtc(path);
+        }
+        catch (Exception)
+        {
+            return default;
+        }
     }
 
     public bool HasAvalonia => Xmlns.ContainsKey(XamlNamespaces.Avalonia);
 
-    private List<ResourceEntry>? _libraryResources;
+    // Lazy<T> (ExecutionAndPublication): two requests asking at once wait for one scan instead of both running it.
+    private readonly Lazy<IReadOnlyList<ResourceEntry>> _libraryResources;
 
     /// <summary>Resource keys declared or used by compiled themes and libraries the project references.</summary>
-    public IReadOnlyList<ResourceEntry> LibraryResources => _libraryResources ??= AssemblyResourceScanner.Scan(
-        Compilation.References.OfType<PortableExecutableReference>().Select(r => r.FilePath).OfType<string>()
-            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}packs{Path.DirectorySeparatorChar}", StringComparison.Ordinal)));
+    public IReadOnlyList<ResourceEntry> LibraryResources => _libraryResources.Value;
 
-    private Dictionary<string, ThemeFacts>? _themes;
+    private readonly Lazy<IReadOnlyDictionary<string, ThemeFacts>> _themes;
 
     /// <summary>What compiled themes (Fluent, Simple, …) say about each control type: template parts, classes, pseudo-classes.</summary>
-    public IReadOnlyDictionary<string, ThemeFacts> LibraryThemes => _themes ??= ThemeScanner.Scan(
-        Compilation.References.OfType<PortableExecutableReference>().Select(r => r.FilePath).OfType<string>()
-            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}packs{Path.DirectorySeparatorChar}", StringComparison.Ordinal)));
+    public IReadOnlyDictionary<string, ThemeFacts> LibraryThemes => _themes.Value;
 
-    private ILookup<string, INamedTypeSymbol>? _typesByName;
+    private Lazy<ILookup<string, INamedTypeSymbol>>? _typesByName;
 
     /// <summary>
     /// Top-level types by simple name, from the project and every reference (for "import this type" fixes): public types,
     /// plus the project's own internal ones; the System namespaces are skipped. The project's types come first.
     /// </summary>
-    public ILookup<string, INamedTypeSymbol> TypesByName => _typesByName ??= BuildTypesByName();
+    public ILookup<string, INamedTypeSymbol> TypesByName =>
+        LazyInitializer.EnsureInitialized(ref _typesByName, () => new Lazy<ILookup<string, INamedTypeSymbol>>(BuildTypesByName)).Value;
 
     private ILookup<string, INamedTypeSymbol> BuildTypesByName()
     {

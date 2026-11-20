@@ -9,21 +9,35 @@ namespace AxamlLs.Lsp;
 /// <summary>The AXAML language server: diagnostics, hover, go-to-definition and completion.</summary>
 public sealed class LspServer : IDisposable
 {
+    /// <summary>One analysis of a document version. A class, so it is published to other threads with one reference write.</summary>
+    private sealed record DocumentAnalysis(int Version, ProjectSnapshot? Project, XamlAnalyzer Analyzer, LineIndex Lines);
+
     private sealed class OpenDocument
     {
         public required string Uri { get; init; }
         public required string Path { get; init; }
+        /// <summary>Text and Version change together under <c>lock (doc)</c>.</summary>
         public string Text { get; set; } = "";
         public int Version { get; set; }
         public CancellationTokenSource? Pending { get; set; }
-        public (int Version, ProjectSnapshot? Project, XamlAnalyzer Analyzer, LineIndex Lines)? Cached { get; set; }
+        private DocumentAnalysis? _cached;
+        public DocumentAnalysis? Cached { get => Volatile.Read(ref _cached); set => Volatile.Write(ref _cached, value); }
+        /// <summary>Held while analyzing, so concurrent requests for the same version wait for one analysis instead of each running it.</summary>
+        public readonly object AnalyzeLock = new();
+        /// <summary>The diagnostics last sent and the project snapshot they were computed with, to skip sending the same list again.</summary>
+        public (string Json, ProjectSnapshot? Project)? LastPublished { get; set; }
     }
+
+    /// <summary>What other files' diagnostics depend on, per project folder: style facts and the set of resource keys.</summary>
+    private sealed record CrossFileFacts(ProjectStyles? Styles, HashSet<string>? Keys);
 
     private readonly JsonRpc _rpc;
     private readonly WorkspaceManager _workspace = new();
     private readonly ConcurrentDictionary<string, OpenDocument> _documents = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<ProjectHost, byte> _announcedLoads = new();
     private readonly ConcurrentDictionary<ProjectHost, ProjectXaml> _projectXaml = new();
+    private readonly ConcurrentDictionary<string, CrossFileFacts> _crossFileFacts = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _inFlight = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _shutdown = new();
     private bool _clientSupportsProgress;
     private InlayHintOptions _hintOptions = InlayHintOptions.Default;
@@ -53,6 +67,12 @@ public sealed class LspServer : IDisposable
             var method = (string?)message["method"];
             var id = message["id"]?.DeepClone();
             if (method == null) continue; // A response to one of our requests.
+            if (method == "$/cancelRequest")
+            {
+                // Handled here, not queued: the request it cancels may be running on another thread right now.
+                if (message["params"]?["id"] is { } cancelled && _inFlight.TryGetValue(cancelled.ToJsonString(), out var running)) running.Cancel();
+                continue;
+            }
             if (id != null)
             {
                 _ = Task.Run(() => HandleRequestAsync(id, method, message["params"] as JsonObject));
@@ -75,8 +95,13 @@ public sealed class LspServer : IDisposable
     {
         JsonNode? result = null;
         JsonObject? error = null;
+        var key = id.ToJsonString();
+        using var cts = new CancellationTokenSource();
+        _inFlight[key] = cts;
         try
         {
+            // Queued behind other work and already cancelled (the editor moved on): don't compute an answer nobody reads.
+            cts.Token.ThrowIfCancellationRequested();
             result = method switch
             {
                 "initialize" => Initialize(p),
@@ -104,6 +129,10 @@ public sealed class LspServer : IDisposable
                 _ => throw new MethodNotFoundException(method),
             };
         }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            error = RequestCancelled;
+        }
         catch (MethodNotFoundException)
         {
             error = new JsonObject { ["code"] = -32601, ["message"] = $"Method not found: {method}" };
@@ -117,11 +146,22 @@ public sealed class LspServer : IDisposable
             Log.Error($"Request {method} failed", ex);
             error = new JsonObject { ["code"] = -32603, ["message"] = ex.Message };
         }
+        finally
+        {
+            _inFlight.TryRemove(key, out _);
+        }
+        if (error == null && cts.IsCancellationRequested)
+        {
+            result = null;
+            error = RequestCancelled;
+        }
         var response = new JsonObject { ["id"] = id };
         if (error != null) response["error"] = error;
         else response["result"] = result;
         await _rpc.SendAsync(response).ConfigureAwait(false);
     }
+
+    private static JsonObject RequestCancelled => new() { ["code"] = -32800, ["message"] = "Request cancelled" };
 
     private sealed class MethodNotFoundException(string method) : Exception(method);
 
@@ -153,24 +193,19 @@ public sealed class LspServer : IDisposable
                 lock (doc)
                 {
                     doc.Version = (int?)p["textDocument"]!["version"] ?? doc.Version + 1;
-                    foreach (var change in p["contentChanges"]!.AsArray())
-                    {
-                        // Full sync: the last change carries the whole document.
-                        if (change?["range"] == null) doc.Text = (string?)change?["text"] ?? doc.Text;
-                    }
+                    doc.Text = ApplyChanges(doc.Text, p["contentChanges"]!.AsArray());
                 }
-                Schedule(doc, delayMs: 200);
-                // Classes set here may change which selector classes elsewhere count as used.
-                foreach (var other in _documents.Values)
-                {
-                    if (other != doc) Schedule(other, delayMs: 800);
-                }
+                // Other open files are re-checked only if this edit changed what they depend on (see Schedule).
+                Schedule(doc, delayMs: 150, notifyOthers: true);
                 break;
             }
             case "textDocument/didClose":
             {
                 var uri = (string)p!["textDocument"]!["uri"]!;
-                if (_documents.TryRemove(uri, out var doc)) doc.Pending?.Cancel();
+                if (_documents.TryRemove(uri, out var doc))
+                {
+                    lock (doc) doc.Pending?.Cancel();
+                }
                 _ = PublishAsync(uri, null, []);
                 break;
             }
@@ -187,7 +222,8 @@ public sealed class LspServer : IDisposable
         {
             ["capabilities"] = new JsonObject
             {
-                ["textDocumentSync"] = new JsonObject { ["openClose"] = true, ["change"] = 1 },
+                // Incremental: the editor sends only the edited range, not the whole file on every keystroke.
+                ["textDocumentSync"] = new JsonObject { ["openClose"] = true, ["change"] = 2 },
                 ["hoverProvider"] = true,
                 ["definitionProvider"] = true,
                 ["referencesProvider"] = true,
@@ -224,7 +260,30 @@ public sealed class LspServer : IDisposable
 
     // ---------------------------------------------------------------- analysis & diagnostics
 
-    private void Schedule(OpenDocument doc, int delayMs)
+    /// <summary>
+    /// Applies didChange content changes in order: a change with a range replaces that range (incremental sync),
+    /// one without replaces the whole text.
+    /// </summary>
+    internal static string ApplyChanges(string text, JsonArray changes)
+    {
+        foreach (var change in changes)
+        {
+            if (change == null) continue;
+            var newText = (string?)change["text"] ?? "";
+            if (change["range"] is not JsonObject range)
+            {
+                text = newText;
+                continue;
+            }
+            var lines = new LineIndex(text);
+            var start = lines.GetOffset((int)range["start"]!["line"]!, (int)range["start"]!["character"]!);
+            var end = Math.Max(start, lines.GetOffset((int)range["end"]!["line"]!, (int)range["end"]!["character"]!));
+            text = string.Concat(text.AsSpan(0, start), newText, text.AsSpan(end));
+        }
+        return text;
+    }
+
+    private void Schedule(OpenDocument doc, int delayMs, bool notifyOthers = false)
     {
         CancellationTokenSource cts;
         lock (doc)
@@ -246,7 +305,18 @@ public sealed class LspServer : IDisposable
                     if (unnecessary) lsp["tags"] = new JsonArray(1); // Unnecessary: the editor fades it
                     diagnostics.Add(lsp);
                 }
-                await PublishAsync(doc.Uri, version, diagnostics).ConfigureAwait(false);
+                if (cts.IsCancellationRequested) return;
+                // Unchanged since the last publish (another file's edit, a .cs save that didn't matter): don't send it again.
+                // A new project snapshot always publishes once, so the first result after loading is confirmed.
+                var json = diagnostics.ToJsonString();
+                var project = analyzer.Project;
+                lock (doc)
+                {
+                    if (doc.LastPublished is { } last && last.Json == json && ReferenceEquals(last.Project, project)) json = null;
+                    else doc.LastPublished = (json, project);
+                }
+                if (json != null) await PublishAsync(doc.Uri, version, diagnostics).ConfigureAwait(false);
+                if (notifyOthers && CrossFileFactsChanged(doc, analyzer)) ScheduleOthers(doc);
             }
             catch (OperationCanceledException)
             {
@@ -256,6 +326,32 @@ public sealed class LspServer : IDisposable
                 Log.Error($"Analysis of {doc.Path} failed", ex);
             }
         });
+    }
+
+    /// <summary>
+    /// Whether this document's edit changed something other files' diagnostics read: classes, selectors, template parts,
+    /// keys set in code (one <see cref="ProjectStyles"/> object while those stay the same) or the set of resource keys.
+    /// Typing inside a value or moving lines changes neither, so the other open files are not re-checked.
+    /// </summary>
+    private bool CrossFileFactsChanged(OpenDocument doc, XamlAnalyzer analyzer)
+    {
+        var root = analyzer.ProjectDirectory ?? System.IO.Path.GetDirectoryName(doc.Path) ?? "";
+        var styles = analyzer.StyleProvider?.Invoke();
+        var keys = analyzer.ResourceProvider?.Invoke() is { } resources ? resources.Select(r => r.Key).ToHashSet(StringComparer.Ordinal) : null;
+        var now = new CrossFileFacts(styles, keys);
+        var before = _crossFileFacts.GetValueOrDefault(root);
+        _crossFileFacts[root] = now;
+        if (before == null) return true;
+        return !ReferenceEquals(before.Styles, styles) ||
+               (before.Keys == null) != (keys == null) || before.Keys != null && !before.Keys.SetEquals(keys!);
+    }
+
+    private void ScheduleOthers(OpenDocument changed)
+    {
+        foreach (var other in _documents.Values)
+        {
+            if (other != changed) Schedule(other, delayMs: 400);
+        }
     }
 
     /// <summary>
@@ -276,6 +372,40 @@ public sealed class LspServer : IDisposable
 
     private (int Version, XamlAnalyzer Analyzer, LineIndex Lines) Analyze(OpenDocument doc)
     {
+        var host = _workspace.GetHostFor(doc.Path);
+        if (host != null) AnnounceLoad(host);
+        var project = host?.Current;
+        // Fast path without the lock: this version was already analyzed.
+        var cached = doc.Cached;
+        int current;
+        lock (doc) current = doc.Version;
+        if (cached != null && cached.Version == current && ReferenceEquals(cached.Project, project)) return (cached.Version, cached.Analyzer, cached.Lines);
+
+        lock (doc.AnalyzeLock)
+        {
+            string text;
+            int version;
+            lock (doc)
+            {
+                text = doc.Text;
+                version = doc.Version;
+            }
+            cached = doc.Cached; // someone may have finished it while we waited
+            if (cached != null && cached.Version == version && ReferenceEquals(cached.Project, project)) return (version, cached.Analyzer, cached.Lines);
+
+            var analyzer = XamlAnalyzer.Analyze(text, project, host?.CompiledBindingsDefault ?? false);
+            ProjectXaml.Wire(analyzer, doc.Path, host, OpenBuffers,
+                host == null ? null : () => _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, OpenBuffers()));
+            var lines = new LineIndex(text);
+            doc.Cached = new DocumentAnalysis(version, project, analyzer, lines);
+            Log.Debug($"Analyzed {Path.GetFileName(doc.Path)} v{version}: {analyzer.Result.Diagnostics.Count} diagnostics (project {(project == null ? "not loaded" : "loaded")})");
+            return (version, analyzer, lines);
+        }
+    }
+
+    /// <summary>The current text, its line index and parse tree: from the last analysis when it is of this version, else freshly made.</summary>
+    private (string Text, LineIndex Lines, Xaml.XmlDoc? Doc) CurrentText(OpenDocument doc)
+    {
         string text;
         int version;
         lock (doc)
@@ -283,19 +413,8 @@ public sealed class LspServer : IDisposable
             text = doc.Text;
             version = doc.Version;
         }
-        var host = _workspace.GetHostFor(doc.Path);
-        if (host != null) AnnounceLoad(host);
-        var project = host?.Current;
-        var cached = doc.Cached;
-        if (cached is { } c && c.Version == version && ReferenceEquals(c.Project, project)) return (version, c.Analyzer, c.Lines);
-
-        var analyzer = XamlAnalyzer.Analyze(text, project, host?.CompiledBindingsDefault ?? false);
-        ProjectXaml.Wire(analyzer, doc.Path, host, OpenBuffers,
-            host == null ? null : () => _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, OpenBuffers()));
-        var lines = new LineIndex(text);
-        doc.Cached = (version, project, analyzer, lines);
-        Log.Debug($"Analyzed {Path.GetFileName(doc.Path)} v{version}: {analyzer.Result.Diagnostics.Count} diagnostics (project {(project == null ? "not loaded" : "loaded")})");
-        return (version, analyzer, lines);
+        if (doc.Cached is { } c && c.Version == version) return (text, c.Lines, c.Analyzer.Result.Doc);
+        return (text, new LineIndex(text), null);
     }
 
     /// <summary>Unsaved editor contents by file path (they win over the disk when indexing resources).</summary>
@@ -610,12 +729,10 @@ public sealed class LspServer : IDisposable
     {
         var uri = (string)p["textDocument"]!["uri"]!;
         if (!_documents.TryGetValue(uri, out var doc)) return null;
-        string text;
-        lock (doc) text = doc.Text;
-        var lines = new LineIndex(text);
+        var (text, lines, parsed) = CurrentText(doc);
         var pos = p["position"]!;
         var offset = lines.GetOffset((int)pos["line"]!, (int)pos["character"]!);
-        if (LinkedTags.At(Xaml.XmlDoc.Parse(text), text, offset) is not var (open, close)) return null;
+        if (LinkedTags.At(parsed ?? Xaml.XmlDoc.Parse(text), text, offset) is not var (open, close)) return null;
         return new JsonObject
         {
             ["ranges"] = new JsonArray(Edits.Range(lines, open.Start, open.End), Edits.Range(lines, close.Start, close.End)),
@@ -800,9 +917,7 @@ public sealed class LspServer : IDisposable
     {
         var uri = (string)p["textDocument"]!["uri"]!;
         if ((string?)p["ch"] != "/" || !_documents.TryGetValue(uri, out var doc)) return null;
-        string text;
-        lock (doc) text = doc.Text;
-        var lines = new LineIndex(text);
+        var (text, lines, _) = CurrentText(doc);
         var pos = p["position"]!;
         var offset = lines.GetOffset((int)pos["line"]!, (int)pos["character"]!);
         var edit = Features.SelfClosingEdit(text, offset);

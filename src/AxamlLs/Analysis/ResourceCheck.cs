@@ -1,3 +1,4 @@
+using AxamlLs.Workspace;
 using AxamlLs.Xaml;
 
 namespace AxamlLs.Analysis;
@@ -33,12 +34,21 @@ public static class ResourceCheck
     }
 
     /// <summary>The keys that count as declared: the project's .axaml, compiled themes and libraries, and keys set in C#.</summary>
-    public static HashSet<string> KnownKeys(XamlAnalyzer analyzer)
+    /// <remarks>Cached while the resource list and the project's styles stay the same objects; callers must not change the set.</remarks>
+    public static IReadOnlySet<string> KnownKeys(XamlAnalyzer analyzer)
     {
-        var known = analyzer.Resources().Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
-        known.UnionWith(analyzer.Styles().CodeResourceKeys);
+        var resources = analyzer.Resources();
+        var styles = analyzer.Styles();
+        if (KnownCache.TryGetValue(resources, out var hit) && ReferenceEquals(hit.Styles, styles)) return hit.Keys;
+        var known = resources.Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
+        known.UnionWith(styles.CodeResourceKeys);
+        KnownCache.AddOrUpdate(resources, new Known(styles, known));
         return known;
     }
+
+    private sealed record Known(ProjectStyles Styles, HashSet<string> Keys);
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<ResourceEntry>, Known> KnownCache = new();
 
     public static IEnumerable<XamlDiagnostic> Unknown(XamlAnalyzer analyzer)
     {

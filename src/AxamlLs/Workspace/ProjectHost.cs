@@ -12,7 +12,9 @@ namespace AxamlLs.Workspace;
 /// </summary>
 public sealed class ProjectHost : IDisposable
 {
+    /// <summary>Serializes loads and updates of the Roslyn solution (async: held across awaits, never with a lock).</summary>
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly object _loadLock = new();
     private readonly ConcurrentDictionary<string, byte> _pendingFiles = new(StringComparer.Ordinal);
     private readonly Timer _debounce;
     private MSBuildWorkspace? _workspace;
@@ -20,7 +22,7 @@ public sealed class ProjectHost : IDisposable
     private ProjectId? _projectId;
     private ProjectSnapshot? _current;
     private Task? _loadTask;
-    private FileSystemWatcher? _watcher;
+    private FileIndex? _files;
     private volatile bool _reloadRequested;
 
     public string ProjectPath { get; }
@@ -51,7 +53,7 @@ public sealed class ProjectHost : IDisposable
 
     public Task EnsureLoadedAsync()
     {
-        lock (_gate)
+        lock (_loadLock)
         {
             _loadTask ??= Task.Run(LoadAsync);
             return _loadTask;
@@ -107,7 +109,7 @@ public sealed class ProjectHost : IDisposable
         if (project == null) return;
         var compilation = await project.GetCompilationAsync().ConfigureAwait(false);
         if (compilation == null) return;
-        Volatile.Write(ref _current, new ProjectSnapshot(ProjectPath, compilation, CompiledBindingsDefault));
+        Volatile.Write(ref _current, new ProjectSnapshot(ProjectPath, compilation, CompiledBindingsDefault, Current));
         try
         {
             Updated?.Invoke(this);
@@ -118,36 +120,17 @@ public sealed class ProjectHost : IDisposable
         }
     }
 
+    /// <summary>Follows .cs and project file changes through the folder's shared <see cref="FileIndex"/> watcher.</summary>
     private void StartWatching()
     {
-        if (_watcher != null) return;
-        try
-        {
-            _watcher = new FileSystemWatcher(ProjectDirectory)
-            {
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
-            };
-            _watcher.Changed += OnFileEvent;
-            _watcher.Created += OnFileEvent;
-            _watcher.Deleted += OnFileEvent;
-            _watcher.Renamed += (s, e) =>
-            {
-                OnFileEvent(s, new FileSystemEventArgs(WatcherChangeTypes.Deleted, Path.GetDirectoryName(e.OldFullPath)!, e.OldName));
-                OnFileEvent(s, e);
-            };
-            _watcher.EnableRaisingEvents = true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error("File watching is unavailable; C# changes will need a restart of the server", ex);
-        }
+        if (_files != null) return;
+        _files = FileIndex.For(ProjectDirectory);
+        _files.Changed += OnFileEvent;
     }
 
-    private void OnFileEvent(object sender, FileSystemEventArgs e)
+    private void OnFileEvent(FileSystemEventArgs e)
     {
         var path = e.FullPath;
-        if (ProjectFiles.IsBuildOutput(path)) return;
         if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
         {
             _pendingFiles[path] = 0;
@@ -269,7 +252,7 @@ public sealed class ProjectHost : IDisposable
 
     public void Dispose()
     {
-        _watcher?.Dispose();
+        if (_files != null) _files.Changed -= OnFileEvent;
         _debounce.Dispose();
         _workspace?.Dispose();
     }

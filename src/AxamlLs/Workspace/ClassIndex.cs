@@ -31,54 +31,36 @@ public sealed class ProjectStyles
 /// </summary>
 public static class ClassIndex
 {
-    private sealed record FileFacts(string[] Used, StyledClass[] Styled, ProjectTemplatePart[] Parts, string[] Keys, string[] Pseudo);
+    private sealed record FileFacts(string[] Used, StyledClass[] Styled, ProjectTemplatePart[] Parts, string[] Keys, string[] Pseudo)
+    {
+        public bool SameAs(FileFacts o) =>
+            Used.AsSpan().SequenceEqual(o.Used) && Styled.AsSpan().SequenceEqual(o.Styled) && Parts.AsSpan().SequenceEqual(o.Parts) &&
+            Keys.AsSpan().SequenceEqual(o.Keys) && Pseudo.AsSpan().SequenceEqual(o.Pseudo);
+    }
 
-    private static readonly ConcurrentDictionary<string, (DateTime Stamp, FileFacts Facts)> Cache = new(StringComparer.Ordinal);
+    private static readonly FileFactsCache<FileFacts> Facts = new(ScanFile, (a, b) => a.SameAs(b));
+    private static readonly ConcurrentDictionary<string, (FileFacts[] Parts, ProjectStyles Merged)> Merged = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The project's classes, template parts and code-set keys. Repeated calls with nothing changed return the same
+    /// object without touching the disk; so does an edit that leaves every file's facts as they were (typing inside a
+    /// value, moving lines), so callers can tell by reference whether anything another file depends on changed.
+    /// </summary>
     public static ProjectStyles ForDirectory(string directory, IReadOnlyDictionary<string, string> openBuffers)
     {
+        var index = FileIndex.For(directory);
+        var parts = Facts.Collect(index, index.WithExtensions(".axaml", ".cs"), openBuffers, ".axaml", ".cs");
+        if (Merged.TryGetValue(index.Root, out var last) && FileFactsCache<FileFacts>.SameObjects(last.Parts, parts)) return last.Merged;
         var result = new ProjectStyles();
-        List<string> files;
-        try
+        foreach (var facts in parts)
         {
-            files = Directory.EnumerateFiles(directory, "*.*", SearchOption.AllDirectories)
-                .Where(f => (f.EndsWith(".axaml", StringComparison.Ordinal) || f.EndsWith(".cs", StringComparison.Ordinal)) && !ProjectFiles.IsBuildOutput(f))
-                .ToList();
-        }
-        catch (Exception)
-        {
-            files = [];
-        }
-        foreach (var file in files.Concat(openBuffers.Keys.Where(k => k.StartsWith(directory, StringComparison.Ordinal))).Distinct())
-        {
-            FileFacts facts;
-            if (openBuffers.TryGetValue(file, out var text))
-            {
-                facts = ScanFile(file, text);
-            }
-            else
-            {
-                try
-                {
-                    var stamp = File.GetLastWriteTimeUtc(file);
-                    if (!Cache.TryGetValue(file, out var cached) || cached.Stamp != stamp)
-                    {
-                        cached = (stamp, ScanFile(file, File.ReadAllText(file)));
-                        Cache[file] = cached;
-                    }
-                    facts = cached.Facts;
-                }
-                catch (IOException)
-                {
-                    continue;
-                }
-            }
             result.UsedClasses.UnionWith(facts.Used);
             result.StyledClasses.UnionWith(facts.Styled);
             result.TemplateParts.AddRange(facts.Parts);
             result.CodeResourceKeys.UnionWith(facts.Keys);
             result.CodePseudoClasses.UnionWith(facts.Pseudo);
         }
+        Merged[index.Root] = (parts, result);
         return result;
     }
 
