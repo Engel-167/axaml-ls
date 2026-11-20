@@ -19,3 +19,4 @@ The plans in progress are in [`docs/plans/`](docs/plans/).
 |---|---|
 | `mise run ci` | Build with warnings as errors, then the tests (what CI runs) |
 | `mise run smoke` | The server answers over LSP stdio like an editor would; output must not change unless intended |
+| `mise run bench` | Performance work only: no regression against `main` (takes about 2 minutes) |

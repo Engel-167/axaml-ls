@@ -62,6 +62,17 @@ Round 1 measured with throwaway probes. Make them permanent.
 **Done when:** `mise run bench` on the current `main` prints a baseline. Commit that baseline as
 `docs/plans/bench-baseline.json`.
 
+**Status: done.** What changed from the sketch above, and why:
+- Comparing against stored numbers was too noisy on a desktop (the `powersave` governor, a browser): the same build
+  "regressed" by 15-100% between runs. So the gate is now side by side: `mise run bench` builds `main` (or
+  `-- --base-ref REF`) in a temporary worktree, starts both servers on the same project and alternates rounds
+  between them. An A/A run (the same build on both sides) passed 4 times out of 4.
+- Every scenario warms up once, then runs 3 rounds; the round with the lowest median counts (best of N).
+- A regression is >15% on a median (>30% on a p95, where GC pauses land) and more than 2 ms (5 ms for p95), and it
+  must reproduce when the flagged scenarios are measured again.
+- `docs/plans/bench-baseline.json` records absolute numbers for reference (`--compare` still checks against it, for
+  quiet machines). Recorded with `scripts/bench.sh --no-base --out docs/plans/bench-baseline.json`.
+
 ### P0.2 Metrics (Predictable P6)
 
 - New `Diagnostics/ServerMetrics.cs`. Make it a `sealed class` instance owned by `LspServer` and passed down, not a
