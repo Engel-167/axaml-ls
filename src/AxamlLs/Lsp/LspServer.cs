@@ -63,6 +63,8 @@ public sealed class LspServer : IDisposable
             new FoldingRangeHandler(documents),
             new LinkedEditingRangeHandler(documents),
             new OnTypeFormattingHandler(documents),
+            new FormattingHandler(documents, _session, range: false),
+            new FormattingHandler(documents, _session, range: true),
             new ContentModifiedGuard(new InlayHintHandler(documents, _session), documents),
             new ContentModifiedGuard(new SemanticTokensHandler(documents), documents),
             new DocumentColorHandler(documents),

@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using AxamlLs.Analysis;
+using AxamlLs.Analysis.Formatting;
 
 namespace AxamlLs.Lsp;
 
@@ -25,16 +26,49 @@ internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgre
 }
 
 /// <summary>The user's settings from <c>initializationOptions</c> (see README "Options").</summary>
-internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints)
+internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints, FormattingSettings Formatting)
 {
-    public static readonly ServerOptions Default = new(Verbose: false, InlayHintOptions.Default);
+    public static readonly ServerOptions Default = new(Verbose: false, InlayHintOptions.Default, FormattingSettings.Default);
 
     public static ServerOptions Parse(JsonObject? initialize)
     {
         var options = initialize?["initializationOptions"];
         return new ServerOptions(
             Verbose: (bool?)options?["verbose"] ?? false,
-            new InlayHintOptions(BindingSource: (bool?)options?["inlayHints"]?["bindingSource"] ?? true));
+            new InlayHintOptions(BindingSource: (bool?)options?["inlayHints"]?["bindingSource"] ?? true),
+            ParseFormatting(options?["formatting"]));
+    }
+
+    /// <summary>Missing or unreadable values keep their defaults.</summary>
+    private static FormattingSettings ParseFormatting(JsonNode? f)
+    {
+        var d = FormattingSettings.Default;
+        if (f is not JsonObject) return d;
+        T Get<T>(string name, T fallback) where T : struct
+        {
+            try
+            {
+                return f[name]?.GetValue<T>() ?? fallback;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+            {
+                return fallback;
+            }
+        }
+        string? Text(string name) => f[name] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+        return new FormattingSettings(
+            Text("attributesOnSeparateLines") switch
+            {
+                "always" => AttributeLayout.Always,
+                "never" => AttributeLayout.Never,
+                _ => d.AttributesOnSeparateLines,
+            },
+            Get("attributesOnSeparateLinesThreshold", d.AttributesOnSeparateLinesThreshold),
+            Get("firstAttributeOnSameLine", d.FirstAttributeOnSameLine),
+            Get("maxLineLength", d.MaxLineLength),
+            Get("spaceBeforeSelfClosingSlash", d.SpaceBeforeSelfClosingSlash),
+            Get("keepBlankLines", d.KeepBlankLines),
+            Text("indentAttributesBy") == "indent" ? AttributeIndent.Indent : d.IndentAttributesBy);
     }
 }
 

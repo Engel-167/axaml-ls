@@ -139,6 +139,22 @@ That makes "formatting never changes meaning" true *by construction*, and testab
 **Check:** in Zed, `editor: format` on Orion files in a scratch copy (not the originals). `format_on_save` works with
 `"formatter": "language_server"`.
 
+**Status: done** except the nice-to-have on-type formatting on `\n` and `>` (item 5).
+- `Analysis/Formatting/XamlLayout.cs` and `FormattingOptions.cs`, plus `Lsp/Handlers/FormattingHandlers.cs` (one
+  class for both methods). Settings are parsed in `ServerOptions` and documented in README.
+- Kept as written, beyond the list above:
+  - inline containers (`TextBlock`, `Span`, …, or anything with a `Run` child), because whitespace between inlines
+    shows as a space;
+  - empty content (`<Grid></Grid>`);
+  - everything outside the root element;
+  - a comment on the same line as the item before it.
+- Tests (`FormattingTests`):
+  - one per option, plus property elements, multi-line values, comments, preserved content, ranges and CRLF;
+  - the property test on every `.axaml` in `samples/` and Orion (65 files, two settings each): only whitespace
+    changes, idempotent, well formed, same elements and attribute values, same diagnostics;
+  - a request through the server, which gives no edits for a broken document.
+- Still to check by hand: `editor: format` and format-on-save in Zed, on a scratch copy.
+
 ---
 
 ## F2. Highlight other uses in the file

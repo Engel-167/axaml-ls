@@ -30,6 +30,7 @@ the server for you. Any other editor that speaks LSP can run it over stdio. For 
 - **Hover** also shows a color swatch for color resources and literals (with `#hex`, `rgb()` and `hsl()`), a table for `Thickness`/`CornerRadius`/`BoxShadow` values (`Left 7 · Top 2 · Right 7 · Bottom 2`), and for selector parts the type, where a class is set (first five places), what a pseudo-class means and who declares it, template parts, `/template/` and `^`.
 - **Outline and breadcrumbs**: one symbol per element (`Button #SaveButton .accent`, `Style Button.Actions:pointerover`, `SolidColorBrush [AccentBrush]`, `Setter Background`), nested. Zed uses it only with `"document_symbols": "on"` (see Setup); without it the tree-sitter outline lists named elements, `x:Key` resources and styles.
 - **Folding** of multi-line elements, multi-line start tags, comments and `<!-- #region Name -->` … `<!-- #endregion -->` blocks. Zed uses it only with `"document_folding_ranges": "on"`.
+- **Formatting** (`editor: format`, or `"format_on_save": "on"` with `"formatter": "language_server"` in Zed), whole document or a selection: indentation, one element per line, attributes on their own lines when a tag is long or has many of them (see `formatting` under Options). It only ever changes whitespace between tags and attributes: values, attribute order, comments and text are never touched, nor is anything inside text content, inline content (`TextBlock` with `Run`s) or `xml:space="preserve"`. A document that is not well formed is left alone.
 - **Go to the view model and the code-behind**: `editor: go to type definition` jumps to the type of the symbol under the cursor, or (anywhere else) to the `x:DataType` in scope; `editor: go to implementation` jumps to the `x:Class` in `MainView.axaml.cs`, or to the handler method from an event attribute. With `"code_lens": "on"`, the root element also shows `→ MainViewModel` and `→ code-behind` lenses that open those files.
 
 ## What it checks
@@ -87,7 +88,16 @@ Options the server reads from `lsp.axaml-ls.initialization_options`:
     "axaml-ls": {
       "initialization_options": {
         "verbose": false,
-        "inlayHints": { "bindingSource": true }   // false hides the (MainViewModel). hint before binding paths
+        "inlayHints": { "bindingSource": true },  // false hides the (MainViewModel). hint before binding paths
+        "formatting": {
+          "attributesOnSeparateLines": "auto",     // "auto" | "always" | "never"
+          "attributesOnSeparateLinesThreshold": 3, // with "auto": break a tag with more attributes than this
+          "maxLineLength": 120,                    // with "auto": break a tag longer than this on one line
+          "firstAttributeOnSameLine": true,        // keep the first attribute next to the tag name
+          "indentAttributesBy": "alignWithFirst",  // "alignWithFirst" | "indent" (one level deeper than the tag)
+          "spaceBeforeSelfClosingSlash": true,     // <Border /> rather than <Border/>
+          "keepBlankLines": 1                      // longer runs of blank lines between elements shrink to this
+        }
       }
     }
   }
