@@ -4,6 +4,13 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
+    <!-- docs/ENGINEERING.md I2: the recommended .NET analyzers and the .editorconfig style rules run in every build.
+         Warnings stay warnings locally; CI builds with -warnaserror. -->
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: not every member needs a summary; the rule is "why, where it isn't obvious". -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
 </Project>
