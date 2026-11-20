@@ -22,6 +22,7 @@ public sealed class ProjectIndexes : IDisposable
     private readonly FileFactsCache<ClassIndex.FileFacts> _styleFacts;
     private readonly FileFactsCache<FileWords> _words;
     private readonly FileFactsCache<CodeLiteralFacts> _codeLiterals;
+    private readonly FileFactsCache<XamlSymbol[]> _symbols;
     private readonly ServerMetrics? _metrics;
     private Merged<List<ResourceEntry>, List<ResourceEntry>>? _resources;
     private Merged<ClassIndex.FileFacts, ProjectStyles>? _styles;
@@ -47,6 +48,7 @@ public sealed class ProjectIndexes : IDisposable
         _styleFacts = new(ClassIndex.ScanFile, (a, b) => a.SameAs(b), metrics);
         _words = new((_, text) => FileWords.Scan(text), (a, b) => a.SameAs(b), metrics);
         _codeLiterals = new(CodeLiteralFacts.Scan, (a, b) => a.SameAs(b), metrics);
+        _symbols = new(XamlSymbols.Scan, (a, b) => a.AsSpan().SequenceEqual(b), metrics);
     }
 
     public string Root => Files.Root;
@@ -94,6 +96,10 @@ public sealed class ProjectIndexes : IDisposable
     /// <summary>The style classes and resource keys named by string literals in the folder's .cs files (cached per file).</summary>
     public IReadOnlyList<CodeLiteralFacts> CodeLiterals(IReadOnlyDictionary<string, string> openBuffers) =>
         _codeLiterals.Collect(Files, Files.WithExtensions(".cs"), openBuffers, ".cs");
+
+    /// <summary>The names declared in the folder's .axaml files (views, keys, element names, styles, …), cached per file.</summary>
+    public IEnumerable<XamlSymbol> Symbols(IReadOnlyDictionary<string, string> openBuffers) =>
+        _symbols.Collect(Files, Files.WithExtensions(".axaml"), openBuffers, ".axaml").SelectMany(s => s);
 
     private static string Normalize(string root) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
 

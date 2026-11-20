@@ -1,3 +1,4 @@
+using AxamlLs.Text;
 using AxamlLs.Xaml;
 using AxamlLs.Workspace;
 using Microsoft.CodeAnalysis;
@@ -136,7 +137,7 @@ public static class Assets
             if (!rel.Contains('/')) continue; // already listed
             var fileName = Path.GetFileName(f);
             // Tiers first (name starts with / contains the text / the path matches it fuzzily), then fzf's score.
-            if (FuzzyScore(rel, filter) is not { } score) continue;
+            if (FuzzyMatch.Score(rel, filter) is not { } score) continue;
             var rank = fileName.StartsWith(filter, StringComparison.OrdinalIgnoreCase) ? 0
                 : fileName.Contains(filter, StringComparison.OrdinalIgnoreCase) ? 1 : 2;
             deep.Add((rank, score, rel, f));
@@ -239,77 +240,6 @@ public static class Assets
     /// <summary>Whether a resolved path exists: the project's file index answers for its files, the disk for the rest.</summary>
     private static bool Exists(FileIndex? index, string path) =>
         index?.Contains(path) == true || File.Exists(path) || Directory.Exists(path);
-
-    /// <summary>
-    /// fzf's scoring (v1, the greedy-then-shortest-window variant): the typed letters must appear in order; each match
-    /// scores, more at the start of a word or path segment and when consecutive, and gaps cost. Null when it doesn't match.
-    /// </summary>
-    internal static int? FuzzyScore(string text, string pattern)
-    {
-        if (pattern.Length == 0) return 0;
-        static bool Eq(char a, char b) => char.ToLowerInvariant(a) == char.ToLowerInvariant(b);
-
-        // Forward: the first position where the whole pattern has been seen.
-        int p = 0, end = -1;
-        for (var i = 0; i < text.Length; i++)
-        {
-            if (!Eq(text[i], pattern[p])) continue;
-            if (++p == pattern.Length)
-            {
-                end = i;
-                break;
-            }
-        }
-        if (end < 0) return null;
-        // Backward from there: the shortest window that still holds the pattern.
-        var start = 0;
-        p = pattern.Length - 1;
-        for (var i = end; i >= 0; i--)
-        {
-            if (!Eq(text[i], pattern[p])) continue;
-            if (--p < 0)
-            {
-                start = i;
-                break;
-            }
-        }
-
-        const int Match = 16, GapStart = -3, GapExtension = -1, Consecutive = 4;
-        int score = 0, consecutive = 0;
-        var inGap = false;
-        p = 0;
-        for (var i = start; i <= end; i++)
-        {
-            if (p < pattern.Length && Eq(text[i], pattern[p]))
-            {
-                var bonus = Bonus(text, i);
-                score += Match + (p == 0 ? bonus * 2 : bonus);
-                if (consecutive > 0) score += Math.Max(bonus, Consecutive);
-                consecutive++;
-                inGap = false;
-                p++;
-            }
-            else
-            {
-                score += inGap ? GapExtension : GapStart;
-                inGap = true;
-                consecutive = 0;
-            }
-        }
-        return score;
-
-        static int Bonus(string t, int i)
-        {
-            if (i == 0) return 10;
-            var prev = t[i - 1];
-            var c = t[i];
-            if (prev is '/' or '\\') return 9;
-            if (prev is '_' or '-' or '.' or ' ') return 8;
-            if (char.IsLower(prev) && char.IsUpper(c)) return 7;
-            if (!char.IsDigit(prev) && char.IsDigit(c)) return 7;
-            return 0;
-        }
-    }
 
     /// <summary>The project file a path value under the cursor points to (Svg Path, Image Source …).</summary>
     public static string? At(XamlAnalyzer analyzer, int offset)

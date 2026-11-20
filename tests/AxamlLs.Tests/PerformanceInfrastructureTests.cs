@@ -1,3 +1,4 @@
+using AxamlLs.Text;
 using System.Text.Json.Nodes;
 using AxamlLs.Analysis;
 using AxamlLs.Lsp;
@@ -40,14 +41,14 @@ public class PerformanceInfrastructureTests
     [Fact]
     public void Fuzzy_score_prefers_word_starts_and_runs()
     {
-        Assert.Null(Assets.FuzzyScore("Assets/Icons/home.svg", "xyz"));
-        Assert.NotNull(Assets.FuzzyScore("Assets/Icons/home.svg", "aih"));
+        Assert.Null(FuzzyMatch.Score("Assets/Icons/home.svg", "xyz"));
+        Assert.NotNull(FuzzyMatch.Score("Assets/Icons/home.svg", "aih"));
         // "home" as a whole word beats the same letters scattered.
-        var word = Assets.FuzzyScore("Icons/home.svg", "home")!.Value;
-        var scattered = Assets.FuzzyScore("Icons/hxoxmxe.svg", "home")!.Value;
+        var word = FuzzyMatch.Score("Icons/home.svg", "home")!.Value;
+        var scattered = FuzzyMatch.Score("Icons/hxoxmxe.svg", "home")!.Value;
         Assert.True(word > scattered, $"{word} vs {scattered}");
         // Matching at a segment start beats the middle of a word.
-        Assert.True(Assets.FuzzyScore("Icons/logo.png", "lo") > Assets.FuzzyScore("Icons/hello.png", "lo"));
+        Assert.True(FuzzyMatch.Score("Icons/logo.png", "lo") > FuzzyMatch.Score("Icons/hello.png", "lo"));
     }
 
     /// <summary>A temp folder with Views/A.axaml, obj/Debug/B.axaml and .git/C.axaml.</summary>

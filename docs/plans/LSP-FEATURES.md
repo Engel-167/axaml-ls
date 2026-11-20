@@ -191,6 +191,14 @@ kind, tag pairs and whitespace.
 
 **Tests** (`WorkspaceSymbolTests.cs`): every kind is found in `samples/SampleApp`, fuzzy query ranking, and the cap.
 
+**Status: done.**
+- `Workspace/XamlSymbols.cs` scans from the parse tree only and is cached per file in `ProjectIndexes.Symbols`.
+- `Text/FuzzyMatch.cs` is moved out of `Assets`.
+- `Lsp/Handlers/WorkspaceSymbolHandler.cs` searches every loaded project's folder.
+- A view's span covers only its simple class name; the namespace becomes `containerName`.
+- `samples/SampleApp` has no `ControlTheme`, so that kind is tested on inline text instead of being added to the
+  samples, whose diagnostics other tests pin.
+
 ---
 
 ## F4. Follow file renames and moves
