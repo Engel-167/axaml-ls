@@ -385,6 +385,24 @@ symbols:
 **Tests:** the same fixes as today in `QuickFixTests.cs`, unchanged and green. Add a test that two snapshots with the
 same references share one `LibraryTypeNames` instance.
 
+**Status: done.**
+- `Workspace/LibraryTypeNames.cs` reads public type names from the DLLs with `System.Reflection.Metadata`. It is
+  carried to the next snapshot while the referenced files and their timestamps are the same, like the theme and
+  resource scans. There is no static cache.
+- `ProjectSnapshot.TypesNamed(name)` uses `GetSymbolsWithName` for the project's own types and
+  `GetTypesByMetadataName` for library names. `OwnTypes` walks only the project's own assembly.
+- `TypesByName` is deleted.
+- Tests (`LibraryTypeNamesTests`):
+  - Snapshots with the same references share one instance.
+  - Differential: for every simple name in the sample compilation (over 1,000), `TypesNamed` returns the same types
+    in the same order as the old full namespace walk, which the test keeps as the oracle. `OwnTypes` matches the
+    walk's own types.
+  - `QuickFixTests` are unchanged and green.
+- Measured on Orion. The first lookup on a new compilation takes 21 ms instead of 55 ms. Later lookups cost about
+  the same as the old walk (5 ms against 7 ms), because Roslyn already shares metadata symbols between compilations.
+  The cold name scan takes 39 ms, once per reference set. A modest gain: the main win is that a lookup no longer
+  depends on the size of every referenced library.
+
 ---
 
 ## P5. Pass cancellation down

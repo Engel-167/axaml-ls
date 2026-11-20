@@ -117,7 +117,7 @@ public static class QuickFixes
         var inElementName = el != null && d.Start >= el.NameStart && d.Start <= el.NameEnd;
         var fixes = new List<QuickFix>();
 
-        foreach (var type in p.TypesByName[word].Where(t => !t.IsStatic || t.TypeKind != TypeKind.Class).Take(5))
+        foreach (var type in p.TypesNamed(word).Where(t => !t.IsStatic || t.TypeKind != TypeKind.Class).Take(5))
         {
             var clr = type.ContainingNamespace.ToDisplayString();
             if (clr.Length == 0) continue;
@@ -176,9 +176,7 @@ public static class QuickFixes
 
         var viewName = a.Result.ClassType?.Name ?? Path.GetFileNameWithoutExtension(a.DocumentPath ?? "").Split('.')[0];
         var expected = (viewName.EndsWith("View", StringComparison.Ordinal) ? viewName[..^4] : viewName) + "ViewModel";
-        var own = p.TypesByName.SelectMany(g => g)
-            .Where(t => SymbolEqualityComparer.Default.Equals(t.ContainingAssembly, p.Compilation.Assembly) && t.TypeKind == TypeKind.Class && !t.IsStatic)
-            .ToList();
+        var own = p.OwnTypes.Where(t => t.TypeKind == TypeKind.Class && !t.IsStatic).ToList();
         var candidates = own.Where(t => t.Name == expected)
             .Concat(own.Where(t => t.Name != expected && t.Name.EndsWith("ViewModel", StringComparison.Ordinal) && !t.IsAbstract).OrderBy(t => t.Name, StringComparer.Ordinal))
             .Take(5).ToList();
