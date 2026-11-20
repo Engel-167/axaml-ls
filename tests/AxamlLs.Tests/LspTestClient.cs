@@ -53,9 +53,11 @@ internal sealed class LspTestClient : IAsyncDisposable
         SendAsync(new JsonObject { ["method"] = method, ["params"] = parameters });
 
     /// <summary>Initializes (with the given client capabilities, none by default) and opens one document.</summary>
-    public async Task OpenAsync(string uri, string text, JsonObject? capabilities = null)
+    public async Task OpenAsync(string uri, string text, JsonObject? capabilities = null, JsonObject? initializationOptions = null)
     {
-        await RequestAsync("initialize", new JsonObject { ["processId"] = null, ["capabilities"] = capabilities ?? new JsonObject() }).ConfigureAwait(false);
+        var initialize = new JsonObject { ["processId"] = null, ["capabilities"] = capabilities ?? new JsonObject() };
+        if (initializationOptions != null) initialize["initializationOptions"] = initializationOptions;
+        await RequestAsync("initialize", initialize).ConfigureAwait(false);
         await NotifyAsync("initialized", new JsonObject()).ConfigureAwait(false);
         await NotifyAsync("textDocument/didOpen", new JsonObject
         {

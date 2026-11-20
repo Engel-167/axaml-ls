@@ -232,6 +232,19 @@ kind, tag pairs and whitespace.
 - Outside-project and other-assembly references untouched.
 - The `x:Class` rename only when both files move, and only with the setting on.
 
+**Status: done**, except the `didRenameFiles` fallback for clients without `willRename`. Zed, VS Code and Helix send
+`willRename`; the fallback waits for a client that needs it.
+- `Analysis/AssetReferences.cs` finds path references from the analysis rather than as cached per-file facts, since
+  `Assets.Accepts` needs the property's type. The file list is narrowed first with the P3 name pre-filter (the moved
+  file's name). A moved folder or `.axaml` file reads every file.
+- `DocumentLinks` (F7) now uses `AssetReferences`.
+- `Analysis/FileMoves.cs` holds `EditsFor` and `RenamedViews`. It also refuses `%`-escaped values (P7) and keeps
+  `#fragment`s and a leading `./`.
+- `Lsp/Handlers/FileRenameHandler.cs`: the class rename goes through `Rename.ComputeAsync`, from the `x:Class` value.
+- Tests: `FileMoveTests` covers each written form, a folder move, a moved view, values left alone and `RenamedViews`.
+  A request on the real sample checks that `x:Class` and the code-behind follow, and that nothing does with the
+  setting off.
+
 ---
 
 ## F5. Expand selection

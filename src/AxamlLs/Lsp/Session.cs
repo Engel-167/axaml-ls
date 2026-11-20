@@ -30,9 +30,13 @@ internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgre
 /// <param name="ResourceReferences">"N references" on each <c>x:Key</c>.</param>
 internal sealed record CodeLensOptions(bool ResourceReferences = true);
 
-internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints, FormattingSettings Formatting, CodeLensOptions CodeLens)
+/// <summary>What follows a file rename besides path values.</summary>
+/// <param name="UpdateClass">Rename the view's class when the view and its code-behind are renamed together.</param>
+internal sealed record RenameFilesOptions(bool UpdateClass = true);
+
+internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints, FormattingSettings Formatting, CodeLensOptions CodeLens, RenameFilesOptions RenameFiles)
 {
-    public static readonly ServerOptions Default = new(Verbose: false, InlayHintOptions.Default, FormattingSettings.Default, new CodeLensOptions());
+    public static readonly ServerOptions Default = new(Verbose: false, InlayHintOptions.Default, FormattingSettings.Default, new CodeLensOptions(), new RenameFilesOptions());
 
     public static ServerOptions Parse(JsonObject? initialize)
     {
@@ -41,7 +45,8 @@ internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints, 
             Verbose: (bool?)options?["verbose"] ?? false,
             new InlayHintOptions(BindingSource: (bool?)options?["inlayHints"]?["bindingSource"] ?? true),
             ParseFormatting(options?["formatting"]),
-            new CodeLensOptions(ResourceReferences: (bool?)options?["codeLens"]?["resourceReferences"] ?? true));
+            new CodeLensOptions(ResourceReferences: (bool?)options?["codeLens"]?["resourceReferences"] ?? true),
+            new RenameFilesOptions(UpdateClass: (bool?)options?["renameFiles"]?["updateClass"] ?? true));
     }
 
     /// <summary>Missing or unreadable values keep their defaults.</summary>

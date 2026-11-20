@@ -68,6 +68,7 @@ public sealed class LspServer : IDisposable
             new SelectionRangeHandler(documents),
             new DocumentLinkHandler(documents),
             new SignatureHelpHandler(documents),
+            new WillRenameFilesHandler(documents, _workspace, _session),
             new WorkspaceSymbolHandler(documents, _workspace),
             new OnTypeFormattingHandler(documents),
             new FormattingHandler(documents, _session, range: false),
