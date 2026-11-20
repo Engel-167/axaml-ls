@@ -40,6 +40,7 @@ public sealed class LspServer : IDisposable
         _workspace = new WorkspaceManager(metrics, watcher.SourceFor);
         var progress = new ProjectLoadProgress(_client, _session);
         var documents = new Documents(_workspace, progress, metrics);
+        var semanticTokens = new SemanticTokensResults();
         var diagnostics = new DiagnosticsPublisher(documents, _client, metrics);
         var targets = new TargetLookup(documents, progress);
         _workspace.ProjectUpdated += diagnostics.OnProjectUpdated;
@@ -70,7 +71,9 @@ public sealed class LspServer : IDisposable
             new FormattingHandler(documents, _session, range: false),
             new FormattingHandler(documents, _session, range: true),
             new ContentModifiedGuard(new InlayHintHandler(documents, _session), documents),
-            new ContentModifiedGuard(new SemanticTokensHandler(documents), documents),
+            new ContentModifiedGuard(new SemanticTokensHandler(documents, semanticTokens), documents),
+            new ContentModifiedGuard(new SemanticTokensDeltaHandler(documents, semanticTokens), documents),
+            new ContentModifiedGuard(new SemanticTokensRangeHandler(documents), documents),
             new DocumentColorHandler(documents),
             new ColorPresentationHandler(),
         ];

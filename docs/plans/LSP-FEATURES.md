@@ -306,6 +306,16 @@ are not used (tree-sitter) and document links depend on the version; README "Kno
 **Tests** (`SemanticTokensTests.cs`): `range` equals the slice of `full`; applying the delta to the old array gives
 the new `full` (a property test over 200 random single-character edits of a styles file, with a fixed seed).
 
+**Status: done.**
+- `Analysis/SemanticTokens.cs` holds the encoding (moved out of the handler), `Diff` and `Apply`.
+- `Lsp/Handlers/SemanticTokensHandlers.cs` has one handler per method plus `SemanticTokensResults`: the last array
+  per URI, LRU of 64.
+- Unlike the plan, the edit's prefix and suffix are cut at whole tokens (multiples of 5), so a client never sees half a
+  token change.
+- A `previousResultId` the server doesn't know gets the full array.
+- Tests (`SemanticTokensTests`): range against the decoded full tokens, the 200-edit property (seed 20261120) and a
+  delta through the server.
+
 ---
 
 ## F9. Editor-requested diagnostics
