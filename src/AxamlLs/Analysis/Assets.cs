@@ -129,7 +129,7 @@ public static class Assets
         // A name is being typed: also find matching files in the folders below, so a whole path is one completion.
         if (filter.Length == 0) return;
         var deep = new List<(int Rank, int Score, string Rel, string File)>();
-        foreach (var f in Deep(dir, root))
+        foreach (var f in Deep(dir, analyzer.Context.FileIndex))
         {
             if (!Fits(f, accepts)) continue;
             var rel = Path.GetRelativePath(dir, f).Replace('\\', '/');
@@ -156,7 +156,7 @@ public static class Assets
             {
                 if (!attr.HasValue || attr.Value.Trim().Length == 0 || MarkupExtension.IsMarkup(attr.Value)) continue;
                 if (Accepts(el, targetProperty(el, attr)) == null) continue;
-                if (Resolve(analyzer, attr.Value) is not { } file || Exists(analyzer.ProjectDirectory, file)) continue;
+                if (Resolve(analyzer, attr.Value) is not { } file || Exists(analyzer.Context.FileIndex, file)) continue;
                 yield return new XamlDiagnostic(attr.ValueStart, attr.ValueEnd, Severity.Warning, Codes.MissingAsset, $"File not found: {attr.Value.Trim()} ({Path.GetRelativePath(analyzer.ProjectDirectory, file)})");
             }
         }
@@ -191,12 +191,11 @@ public static class Assets
     /// Every file below a folder. Inside the project this is a range of the project's sorted <see cref="FileIndex"/>
     /// (found by binary search, no disk access), so typing in a path value does not walk the tree on each keystroke.
     /// </summary>
-    private static IEnumerable<string> Deep(string dir, string root)
+    private static IEnumerable<string> Deep(string dir, FileIndex? index)
     {
-        var index = FileIndex.For(root);
         var prefix = Path.TrimEndingDirectorySeparator(dir) + Path.DirectorySeparatorChar;
-        if (string.Equals(Path.TrimEndingDirectorySeparator(dir), index.Root, StringComparison.Ordinal) ||
-            prefix.StartsWith(index.Root + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !index.IsPruned(prefix + "x"))
+        if (index != null && (string.Equals(Path.TrimEndingDirectorySeparator(dir), index.Root, StringComparison.Ordinal) ||
+            prefix.StartsWith(index.Root + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !index.IsPruned(prefix + "x")))
         {
             var files = index.Files;
             var lo = LowerBound(files, prefix);
@@ -204,7 +203,7 @@ public static class Assets
             yield break;
         }
 
-        // Outside the project (a path relative to the file that leaves it): walk the disk.
+        // Outside the project (a path relative to the file that leaves it), or no index: walk the disk.
         var pending = new Stack<string>();
         pending.Push(dir);
         while (pending.Count > 0)
@@ -238,8 +237,8 @@ public static class Assets
     }
 
     /// <summary>Whether a resolved path exists: the project's file index answers for its files, the disk for the rest.</summary>
-    private static bool Exists(string root, string path) =>
-        FileIndex.For(root).Contains(path) || File.Exists(path) || Directory.Exists(path);
+    private static bool Exists(FileIndex? index, string path) =>
+        index?.Contains(path) == true || File.Exists(path) || Directory.Exists(path);
 
     /// <summary>
     /// fzf's scoring (v1, the greedy-then-shortest-window variant): the typed letters must appear in order; each match

@@ -14,9 +14,9 @@ public class ResourceKeyTests(SampleProjectFixture sample)
     private List<XamlDiagnostic> Check(string body, out string text)
     {
         text = Header + "\n" + body + "\n</UserControl>";
-        var analyzer = sample.Analyze(text);
-        analyzer.ResourceProvider = () => [new("Accent", "SolidColorBrush", "/p/S.axaml", 1, 1, "Color=\"#FF6600\""), new("Converter", "FooConverter", "/p/S.axaml", 2, 1, null)];
-        analyzer.StyleProvider = () => ClassIndex.ScanText("/p/Code.cs", "app.Resources[\"FromCode\"] = x;");
+        var analyzer = sample.Analyze(text, new ProjectContext(null, null,
+            Resources: () => [new("Accent", "SolidColorBrush", "/p/S.axaml", 1, 1, "Color=\"#FF6600\""), new("Converter", "FooConverter", "/p/S.axaml", 2, 1, null)],
+            Styles: () => ClassIndex.ScanText("/p/Code.cs", "app.Resources[\"FromCode\"] = x;")));
         return ResourceCheck.Unknown(analyzer).ToList();
     }
 
@@ -84,8 +84,8 @@ public class ResourceKeyTests(SampleProjectFixture sample)
         // Wired like the server does it: keys come from the whole sample project.
         foreach (var name in new[] { "Views/MainView.axaml", "Views/Second.axaml" })
         {
-            var analyzer = sample.AnalyzeFile(name);
-            ProjectXaml.Wire(analyzer, Path.Combine(SampleProjectFixture.SampleDir, name), sample.Host, () => new Dictionary<string, string>());
+            var path = Path.Combine(SampleProjectFixture.SampleDir, name);
+            var analyzer = sample.Analyze(File.ReadAllText(path), sample.Context(path));
             Assert.Empty(ResourceCheck.Unknown(analyzer));
         }
     }

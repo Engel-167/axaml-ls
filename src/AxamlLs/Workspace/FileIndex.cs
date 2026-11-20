@@ -4,7 +4,7 @@ using System.IO.Enumeration;
 namespace AxamlLs.Workspace;
 
 /// <summary>
-/// The files of one project folder, listed once and then kept current by an <see cref="IFileChangeSource"/> (a
+/// The files of one project folder (owned by its <see cref="ProjectIndexes"/>), listed once and then kept current by an <see cref="IFileChangeSource"/> (a
 /// <see cref="FileSystemWatcher"/> in the server: the "virtual file system" approach of rust-analyzer and VS Code):
 /// every index, completion and diagnostic reads this list instead of walking the disk again.
 /// <list type="bullet">
@@ -18,7 +18,6 @@ namespace AxamlLs.Workspace;
 /// </summary>
 public sealed class FileIndex : IDisposable
 {
-    private static readonly ConcurrentDictionary<string, FileIndex> Indexes = new(StringComparer.Ordinal);
     private static readonly HashSet<string> PrunedNames = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules" };
     private const long FallbackTtlMs = 1000;
 
@@ -52,13 +51,6 @@ public sealed class FileIndex : IDisposable
         _created = time.GetTimestamp();
         changes.Changed += OnChanges;
         changes.Overflowed += OnOverflow;
-    }
-
-    /// <summary>The index of a folder (created, listed lazily and watched on first use).</summary>
-    public static FileIndex For(string root)
-    {
-        root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        return Indexes.GetOrAdd(root, r => new FileIndex(r, new FileSystemChangeSource(r), TimeProvider.System));
     }
 
     /// <summary>Changes whenever anything below the root changes. Without a reliable change source it changes every second.</summary>
@@ -201,6 +193,5 @@ public sealed class FileIndex : IDisposable
         _changes.Changed -= OnChanges;
         _changes.Overflowed -= OnOverflow;
         _changes.Dispose();
-        Indexes.TryRemove(new KeyValuePair<string, FileIndex>(Root, this));
     }
 }

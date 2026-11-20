@@ -104,8 +104,9 @@ internal sealed class Documents(WorkspaceManager workspace, ProjectLoadProgress 
             cached = doc.Cached; // someone may have finished it while we waited
             if (cached != null && cached.Version == version && ReferenceEquals(cached.Project, project)) return cached;
 
-            var analyzer = XamlAnalyzer.Analyze(text, project, host?.CompiledBindingsDefault ?? false, metrics);
-            ProjectXaml.Wire(analyzer, doc.Path, host, OpenBuffers, host == null ? null : () => ProjectFiles(host));
+            var indexes = host?.Indexes ?? workspace.IndexesFor(System.IO.Path.GetDirectoryName(doc.Path)!);
+            var context = ProjectContext.For(doc.Path, host, indexes, OpenBuffers, host == null ? null : () => ProjectFiles(host));
+            var analyzer = XamlAnalyzer.Analyze(text, project, host?.CompiledBindingsDefault ?? false, context, metrics);
             var analysis = new DocumentAnalysis(version, project, analyzer, new LineIndex(text));
             doc.Cached = analysis;
             Log.Debug($"Analyzed {System.IO.Path.GetFileName(doc.Path)} v{version}: {analyzer.Result.Diagnostics.Count} diagnostics (project {(project == null ? "not loaded" : "loaded")})");

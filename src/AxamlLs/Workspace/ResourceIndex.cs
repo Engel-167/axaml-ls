@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using AxamlLs.Text;
 using AxamlLs.Xaml;
 
@@ -12,32 +11,12 @@ public sealed record ResourceEntry(string Key, string ElementName, string FilePa
 }
 
 /// <summary>
-/// Every x:Key in the project's .axaml files, read straight from the files (no build needed). Files are
-/// re-read when their timestamp changes, and open editor buffers win over the disk, so a resource you
-/// just typed is offered immediately.
+/// Reads the x:Key resources declared in one .axaml file (no build needed). <see cref="ProjectIndexes.Resources"/>
+/// caches it per file and merges the results for a project.
 /// </summary>
 public static class ResourceIndex
 {
-    private static readonly FileFactsCache<List<ResourceEntry>> Facts = new(Scan, SameEntries);
-    private static readonly ConcurrentDictionary<string, (List<ResourceEntry>[] Parts, List<ResourceEntry> Merged)> Merged = new(StringComparer.Ordinal);
-
-    /// <summary>
-    /// Every x:Key of the project. Repeated calls with nothing changed return the same list without touching the disk
-    /// (see <see cref="FileIndex"/>); an edit that leaves a buffer's entries as they were keeps the same list too, so callers
-    /// can compare by reference to see whether anything changed.
-    /// </summary>
-    public static List<ResourceEntry> ForDirectory(string directory, IReadOnlyDictionary<string, string> openBuffers)
-    {
-        var index = FileIndex.For(directory);
-        var parts = Facts.Collect(index, index.WithExtensions(".axaml"), openBuffers, ".axaml");
-        if (Merged.TryGetValue(index.Root, out var last) && FileFactsCache<List<ResourceEntry>>.SameObjects(last.Parts, parts)) return last.Merged;
-        var merged = new List<ResourceEntry>(parts.Sum(p => p.Count));
-        foreach (var p in parts) merged.AddRange(p);
-        Merged[index.Root] = (parts, merged);
-        return merged;
-    }
-
-    private static bool SameEntries(List<ResourceEntry> a, List<ResourceEntry> b) => a.SequenceEqual(b);
+    internal static bool SameEntries(List<ResourceEntry> a, List<ResourceEntry> b) => a.SequenceEqual(b);
 
     public static List<ResourceEntry> Scan(string file, string text)
     {

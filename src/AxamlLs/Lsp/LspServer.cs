@@ -16,7 +16,7 @@ public sealed class LspServer : IDisposable
     private readonly JsonRpc _rpc;
     private readonly LspClient _client;
     private readonly Session _session = new();
-    private readonly WorkspaceManager _workspace = new();
+    private readonly WorkspaceManager _workspace;
     private readonly Dictionary<string, IRequestHandler> _requests;
     private readonly Dictionary<string, INotificationHandler> _notifications;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _inFlight = new(StringComparer.Ordinal);
@@ -34,6 +34,7 @@ public sealed class LspServer : IDisposable
     internal LspServer(Stream input, Stream output, ServerMetrics metrics)
     {
         _metrics = metrics;
+        _workspace = new WorkspaceManager(metrics);
         _rpc = new JsonRpc(input, output);
         _client = new LspClient(_rpc);
         var progress = new ProjectLoadProgress(_client, _session);

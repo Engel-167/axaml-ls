@@ -149,6 +149,22 @@ internal interface IFileChangeSource
   `ThemeScanner` may keep a static cache keyed by DLL path and timestamp, since DLLs are global; say so in their
   `<summary>`). All tests are green, and the bench shows no change.
 
+**Status: done.**
+- `Workspace/ProjectIndexes.cs` holds, per folder, the `FileIndex`, the per-file fact caches of resources and
+  styles, and their merged results. `WorkspaceManager.IndexesFor(folder)` owns the instances, and each
+  `ProjectHost` gets its project folder's indexes. `ResourceIndex` and `ClassIndex` keep only their pure `Scan`
+  functions; `FileIndex.For` and its static registry are gone.
+- `ProjectContext` is passed to `XamlAnalyzer.Analyze`. The old provider properties are now read-only views of
+  it, so callers didn't change. `ProjectContext.For(path, host, indexes, buffers, files)` replaces
+  `ProjectXaml.Wire`, and is still the one place that builds the context for open documents and for project
+  scans. The context also carries the `FileIndex`: asset completion and missing-file checks use it instead of
+  looking one up by folder.
+- `index.rebuilds` (tags `resources` and `styles`) and `files.scanned` now record from `ProjectIndexes`.
+- A bug fixed on the way: asset deep search had `a && b || c && d` where `(…)` was meant. It could dereference a
+  null index, which couldn't happen before because the index was never null.
+- `AssemblyResourceScanner` and `ThemeScanner` keep static caches keyed by DLL path and timestamp. Their
+  `<summary>` says why.
+
 ---
 
 ## P1. Let the editor watch files

@@ -1,4 +1,5 @@
 using AxamlLs.Analysis;
+using AxamlLs.Workspace;
 
 namespace AxamlLs.Tests;
 
@@ -78,8 +79,7 @@ public class ResourceAndSnippetTests(SampleProjectFixture sample)
     private (XamlAnalyzer Analyzer, int Offset) At(string body, IReadOnlyList<AxamlLs.Workspace.ResourceEntry>? resources = null)
     {
         var text = Header + body.Replace("|", "") + "\n</UserControl>";
-        var analyzer = sample.Analyze(text);
-        if (resources != null) analyzer.ResourceProvider = () => resources;
+        var analyzer = sample.Analyze(text, resources == null ? null : new ProjectContext(null, null, Resources: () => resources));
         return (analyzer, Header.Length + body.IndexOf('|'));
     }
 
@@ -162,8 +162,8 @@ public class ThemeResourceTests(SampleProjectFixture sample)
     private List<CompletionItem> CompleteAt(string body)
     {
         var text = Header + body.Replace("|", "") + "\n</UserControl>";
-        var analyzer = sample.Analyze(text);
-        analyzer.ResourceProvider = () => [new("AccentBrush", "SolidColorBrush", "/p/Styles.axaml", 1, 1, null), new("Body", "FontFamily", "/p/Styles.axaml", 2, 1, null)];
+        var analyzer = sample.Analyze(text, new ProjectContext(null, null,
+            Resources: () => [new("AccentBrush", "SolidColorBrush", "/p/Styles.axaml", 1, 1, null), new("Body", "FontFamily", "/p/Styles.axaml", 2, 1, null)]));
         return Completion.At(analyzer, Header.Length + body.IndexOf('|'));
     }
 
@@ -228,9 +228,8 @@ public class ColorAndOpenerTests(SampleProjectFixture sample)
     private XamlAnalyzer Analyze(string body, out int offset)
     {
         offset = Header.Length + body.IndexOf('|');
-        var analyzer = sample.Analyze(Header + body.Replace("|", "") + "\n</UserControl>");
-        analyzer.ResourceProvider = () => [new("Accent", "SolidColorBrush", "/p/S.axaml", 1, 1, "Color=\"#FF6600\""), new("Body", "FontFamily", "/p/S.axaml", 2, 1, null)];
-        return analyzer;
+        return sample.Analyze(Header + body.Replace("|", "") + "\n</UserControl>", new ProjectContext(null, null,
+            Resources: () => [new("Accent", "SolidColorBrush", "/p/S.axaml", 1, 1, "Color=\"#FF6600\""), new("Body", "FontFamily", "/p/S.axaml", 2, 1, null)]));
     }
 
     private List<CompletionItem> CompleteAt(string body) => Completion.At(Analyze(body, out var o), o);
@@ -352,13 +351,13 @@ public class SelectorTests(SampleProjectFixture sample)
     private List<CompletionItem> CompleteAt(string body, params string[] usedClasses)
     {
         var offset = Header.Length + body.IndexOf('|');
-        var analyzer = sample.Analyze(Header + body.Replace("|", "") + "\n</UserControl>");
-        analyzer.StyleProvider = () =>
+        var text = Header + body.Replace("|", "") + "\n</UserControl>";
+        var analyzer = sample.Analyze(text, new ProjectContext(null, null, Styles: () =>
         {
-            var styles = AxamlLs.Workspace.ClassIndex.ScanText("", analyzer.Result.Doc.Text);
+            var styles = AxamlLs.Workspace.ClassIndex.ScanText("", text);
             styles.UsedClasses.UnionWith(usedClasses);
             return styles;
-        };
+        }));
         return Completion.At(analyzer, offset);
     }
 
@@ -528,10 +527,8 @@ public class SetterAndAssetTests(SampleProjectFixture sample)
 
     private XamlAnalyzer Analyze(string text)
     {
-        var analyzer = sample.Analyze(text);
-        analyzer.ProjectDirectory = SampleProjectFixture.SampleDir;
-        analyzer.DocumentPath = Path.Combine(SampleProjectFixture.SampleDir, "Views", "Test.axaml");
-        return analyzer;
+        return sample.Analyze(text, new ProjectContext(SampleProjectFixture.SampleDir, Path.Combine(SampleProjectFixture.SampleDir, "Views", "Test.axaml"),
+            FileIndex: sample.Indexes.Files));
     }
 
     private List<CompletionItem> CompleteAt(string body)

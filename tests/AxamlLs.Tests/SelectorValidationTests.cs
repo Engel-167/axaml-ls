@@ -16,8 +16,7 @@ public class SelectorValidationTests(SampleProjectFixture sample)
               </UserControl.Styles>
             </UserControl>
             """;
-        var analyzer = sample.Analyze(text);
-        ProjectXaml.Wire(analyzer, Path.Combine(SampleProjectFixture.SampleDir, "Views", "Scratch.axaml"), sample.Host, () => new Dictionary<string, string>());
+        var analyzer = sample.Analyze(text, sample.Context(Path.Combine(SampleProjectFixture.SampleDir, "Views", "Scratch.axaml")));
         return Selectors.Validate(analyzer).ToList();
     }
 
@@ -79,11 +78,10 @@ public class SelectorValidationTests(SampleProjectFixture sample)
             {styles}
             </Styles>
             """;
-        var analyzer = sample.Analyze(text);
         // The document is open in the editor, so the project scan reads it from the open buffers.
         var path = Path.Combine(SampleProjectFixture.SampleDir, "Views", "Scratch.axaml");
         var buffers = new Dictionary<string, string> { [path] = text };
-        ProjectXaml.Wire(analyzer, path, sample.Host, () => buffers);
+        var analyzer = sample.Analyze(text, sample.Context(path, buffers));
         return Selectors.Validate(analyzer).Where(d => d.Code == Codes.UnknownTemplatePart).ToList();
     }
 

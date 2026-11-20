@@ -44,18 +44,23 @@ public sealed class XamlAnalyzer
 
     public AnalysisResult Result => _r;
 
-    /// <summary>Project-wide x:Key resources (set by the server; null = only this document's keys).</summary>
-    public Func<IReadOnlyList<ResourceEntry>>? ResourceProvider { get; set; }
+    /// <summary>What this analysis may ask about the rest of the project (given at creation).</summary>
+    public ProjectContext Context { get; }
 
-    /// <summary>Style classes and ControlTheme parts of the whole project (set by the server; null = this document only).</summary>
-    public Func<ProjectStyles>? StyleProvider { get; set; }
+    /// <summary>Project-wide x:Key resources; null = only this document's keys.</summary>
+    public Func<IReadOnlyList<ResourceEntry>>? ResourceProvider => Context.Resources;
 
-    /// <summary>The .axaml file being analyzed and its project's folder (set by the server; used for asset paths).</summary>
-    public string? DocumentPath { get; set; }
+    /// <summary>Style classes and ControlTheme parts of the whole project; null = this document only.</summary>
+    public Func<ProjectStyles>? StyleProvider => Context.Styles;
 
-    /// <summary>Every analyzed .axaml file of the project (set by the server; used by hover to say where a class is set). Null = only this document.</summary>
-    public Func<IReadOnlyList<XamlFile>>? ProjectFiles { get; set; }
-    public string? ProjectDirectory { get; set; }
+    /// <summary>The .axaml file being analyzed (used for relative asset paths).</summary>
+    public string? DocumentPath => Context.DocumentPath;
+
+    /// <summary>Every analyzed .axaml file of the project (hover says where a class is set); null = only this document.</summary>
+    public Func<IReadOnlyList<XamlFile>>? ProjectFiles => Context.Files;
+
+    /// <summary>The project's folder (asset paths); null outside a project.</summary>
+    public string? ProjectDirectory => Context.ProjectDirectory;
 
     public ProjectStyles Styles() => StyleProvider?.Invoke() ?? ClassIndex.ScanText("", _doc.Text);
 
@@ -77,8 +82,9 @@ public sealed class XamlAnalyzer
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<ResourceEntry>, Joined> JoinedResources = new();
     public ProjectSnapshot? Project => _p;
 
-    private XamlAnalyzer(XmlDoc doc, ProjectSnapshot? project, bool compiledDefault)
+    private XamlAnalyzer(XmlDoc doc, ProjectSnapshot? project, bool compiledDefault, ProjectContext context)
     {
+        Context = context;
         _doc = doc;
         _p = project is { HasAvalonia: true } ? project : null;
         _compiledDefault = compiledDefault;
@@ -88,13 +94,14 @@ public sealed class XamlAnalyzer
     /// <param name="text">The document text.</param>
     /// <param name="project">The loaded project, or null to analyse the XML alone.</param>
     /// <param name="compiledDefault">Whether bindings are compiled unless x:CompileBindings says otherwise.</param>
+    /// <param name="context">What the analysis may ask about the rest of the project; none = this document only.</param>
     /// <param name="metrics">Receives the time of each phase (parse, wellformed, resolve), when given.</param>
-    public static XamlAnalyzer Analyze(string text, ProjectSnapshot? project, bool compiledDefault, ServerMetrics? metrics = null)
+    public static XamlAnalyzer Analyze(string text, ProjectSnapshot? project, bool compiledDefault, ProjectContext? context = null, ServerMetrics? metrics = null)
     {
         var start = metrics?.Timestamp() ?? 0;
         var doc = XmlDoc.Parse(text);
         metrics?.AnalysisPhaseSince(ServerMetrics.Phase.Parse, start);
-        var analyzer = new XamlAnalyzer(doc, project, compiledDefault);
+        var analyzer = new XamlAnalyzer(doc, project, compiledDefault, context ?? ProjectContext.None);
         analyzer.Run(text, metrics);
         return analyzer;
     }

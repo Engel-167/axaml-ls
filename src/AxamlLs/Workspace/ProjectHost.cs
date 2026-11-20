@@ -27,6 +27,9 @@ public sealed class ProjectHost : IDisposable
 
     public string ProjectPath { get; }
     public string ProjectDirectory { get; }
+
+    /// <summary>The project folder's file index, resources and style facts.</summary>
+    public ProjectIndexes Indexes { get; }
     public bool CompiledBindingsDefault { get; }
     public ProjectSnapshot? Current => Volatile.Read(ref _current);
     public string? LoadError { get; private set; }
@@ -43,10 +46,13 @@ public sealed class ProjectHost : IDisposable
     /// </summary>
     public Func<ProjectHost, IReadOnlyList<Analysis.CodeRename>, Task>? CodeRenamed { get; set; }
 
-    public ProjectHost(string projectPath)
+    /// <param name="projectPath">The .csproj file.</param>
+    /// <param name="indexes">The indexes of the project's folder (owned by the caller, shared with the analyses).</param>
+    public ProjectHost(string projectPath, ProjectIndexes indexes)
     {
         ProjectPath = projectPath;
         ProjectDirectory = Path.GetDirectoryName(projectPath)!;
+        Indexes = indexes;
         CompiledBindingsDefault = ProjectFiles.DetectCompiledBindingsDefault(projectPath);
         _debounce = new Timer(_ => _ = ApplyPendingAsync(), null, Timeout.Infinite, Timeout.Infinite);
     }
@@ -124,7 +130,7 @@ public sealed class ProjectHost : IDisposable
     private void StartWatching()
     {
         if (_files != null) return;
-        _files = FileIndex.For(ProjectDirectory);
+        _files = Indexes.Files;
         _files.Changed += OnFileChanges;
         _files.Overflowed += OnFilesOverflowed;
     }

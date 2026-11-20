@@ -18,25 +18,12 @@ public sealed class ProjectXaml
 
     private readonly ConcurrentDictionary<string, Entry> _cache = new(StringComparer.Ordinal);
 
-    /// <summary>
-    /// Gives an analyzer the same providers wherever it is created (open document or project scan), so they cannot drift apart.
-    /// </summary>
-    public static void Wire(XamlAnalyzer analyzer, string path, ProjectHost? host, Func<IReadOnlyDictionary<string, string>> openBuffers, Func<IReadOnlyList<XamlFile>>? projectFiles = null)
-    {
-        var root = host?.ProjectDirectory ?? System.IO.Path.GetDirectoryName(path)!;
-        analyzer.ResourceProvider = () => ResourceIndex.ForDirectory(root, openBuffers());
-        analyzer.StyleProvider = () => ClassIndex.ForDirectory(root, openBuffers());
-        analyzer.DocumentPath = path;
-        analyzer.ProjectFiles = projectFiles;
-        analyzer.ProjectDirectory = host?.ProjectDirectory;
-    }
-
     /// <param name="host">The project whose .axaml files are listed.</param>
     /// <param name="openBuffers">Unsaved editor contents by path; they win over the disk.</param>
     public IReadOnlyList<XamlFile> Files(ProjectHost host, IReadOnlyDictionary<string, string> openBuffers)
     {
         var project = host.Current;
-        var index = FileIndex.For(host.ProjectDirectory);
+        var index = host.Indexes.Files;
         var generation = index.Generation;
         var paths = new HashSet<string>(index.WithExtensions(".axaml"), StringComparer.Ordinal);
         foreach (var k in openBuffers.Keys)
@@ -83,8 +70,8 @@ public sealed class ProjectXaml
         }
 
         text ??= System.IO.File.ReadAllText(path);
-        var analyzer = XamlAnalyzer.Analyze(text, project, host.CompiledBindingsDefault);
-        Wire(analyzer, path, host, () => openBuffers, () => Files(host, openBuffers));
+        var context = ProjectContext.For(path, host, host.Indexes, () => openBuffers, () => Files(host, openBuffers));
+        var analyzer = XamlAnalyzer.Analyze(text, project, host.CompiledBindingsDefault, context);
         var file = new XamlFile(path, text, analyzer, new LineIndex(text));
         _cache[path] = new Entry(fromBuffer, stamp, generation, fromBuffer ? text : "", project, file);
         return file;

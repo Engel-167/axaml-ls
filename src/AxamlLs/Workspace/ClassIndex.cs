@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using AxamlLs.Xaml;
 
 namespace AxamlLs.Workspace;
@@ -26,31 +25,21 @@ public sealed class ProjectStyles
 }
 
 /// <summary>
-/// Scans the project's .axaml and .cs files (from disk with timestamp caching; open buffers win) for style classes
-/// and ControlTheme template parts.
+/// Reads style classes, ControlTheme template parts and code-set keys from one .axaml or .cs file.
+/// <see cref="ProjectIndexes.Styles"/> caches it per file and merges the results for a project.
 /// </summary>
 public static class ClassIndex
 {
-    private sealed record FileFacts(string[] Used, StyledClass[] Styled, ProjectTemplatePart[] Parts, string[] Keys, string[] Pseudo)
+    internal sealed record FileFacts(string[] Used, StyledClass[] Styled, ProjectTemplatePart[] Parts, string[] Keys, string[] Pseudo)
     {
         public bool SameAs(FileFacts o) =>
             Used.AsSpan().SequenceEqual(o.Used) && Styled.AsSpan().SequenceEqual(o.Styled) && Parts.AsSpan().SequenceEqual(o.Parts) &&
             Keys.AsSpan().SequenceEqual(o.Keys) && Pseudo.AsSpan().SequenceEqual(o.Pseudo);
     }
 
-    private static readonly FileFactsCache<FileFacts> Facts = new(ScanFile, (a, b) => a.SameAs(b));
-    private static readonly ConcurrentDictionary<string, (FileFacts[] Parts, ProjectStyles Merged)> Merged = new(StringComparer.Ordinal);
-
-    /// <summary>
-    /// The project's classes, template parts and code-set keys. Repeated calls with nothing changed return the same
-    /// object without touching the disk; so does an edit that leaves every file's facts as they were (typing inside a
-    /// value, moving lines), so callers can tell by reference whether anything another file depends on changed.
-    /// </summary>
-    public static ProjectStyles ForDirectory(string directory, IReadOnlyDictionary<string, string> openBuffers)
+    /// <summary>The facts of several files as one <see cref="ProjectStyles"/>.</summary>
+    internal static ProjectStyles Merge(IEnumerable<FileFacts> parts)
     {
-        var index = FileIndex.For(directory);
-        var parts = Facts.Collect(index, index.WithExtensions(".axaml", ".cs"), openBuffers, ".axaml", ".cs");
-        if (Merged.TryGetValue(index.Root, out var last) && FileFactsCache<FileFacts>.SameObjects(last.Parts, parts)) return last.Merged;
         var result = new ProjectStyles();
         foreach (var facts in parts)
         {
@@ -60,26 +49,15 @@ public static class ClassIndex
             result.CodeResourceKeys.UnionWith(facts.Keys);
             result.CodePseudoClasses.UnionWith(facts.Pseudo);
         }
-        Merged[index.Root] = (parts, result);
         return result;
     }
 
     /// <summary>The classes a file sets on elements.</summary>
     public static string[] Scan(string file, string text) => ScanFile(file, text).Used;
 
-    public static ProjectStyles ScanText(string file, string text)
-    {
-        var facts = ScanFile(file, text);
-        var styles = new ProjectStyles();
-        styles.UsedClasses.UnionWith(facts.Used);
-        styles.StyledClasses.UnionWith(facts.Styled);
-        styles.TemplateParts.AddRange(facts.Parts);
-        styles.CodeResourceKeys.UnionWith(facts.Keys);
-        styles.CodePseudoClasses.UnionWith(facts.Pseudo);
-        return styles;
-    }
+    public static ProjectStyles ScanText(string file, string text) => Merge([ScanFile(file, text)]);
 
-    private static FileFacts ScanFile(string file, string text)
+    internal static FileFacts ScanFile(string file, string text)
     {
         if (file.EndsWith(".cs", StringComparison.Ordinal))
         {

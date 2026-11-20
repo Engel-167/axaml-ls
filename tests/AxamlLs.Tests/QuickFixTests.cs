@@ -14,8 +14,7 @@ public class QuickFixTests(SampleProjectFixture sample)
     /// <summary>The fixes for the diagnostic with this code, each as (title, the resulting text of the file it edits).</summary>
     private List<(string Title, string Result, QuickFix Fix)> Fixes(string xaml, string code)
     {
-        var analyzer = sample.Analyze(xaml);
-        ProjectXaml.Wire(analyzer, ViewPath, sample.Host, () => new Dictionary<string, string>());
+        var analyzer = sample.Analyze(xaml, sample.Context(ViewPath));
         var d = DocumentDiagnostics.Collect(analyzer).Select(x => x.Diagnostic).First(x => x.Code == code);
         return QuickFixes.For(analyzer, d).Select(f =>
         {

@@ -114,8 +114,6 @@ The code speaks Avalonia, XAML and LSP, not generic plumbing.
 
 | Where | Rule | What's wrong |
 |---|---|---|
-| `ResourceIndex`, `ClassIndex`, `FileIndex`, `AssemblyResourceScanner`, `ThemeScanner` | P2 | `static` caches shared by every test and project |
-| `XamlAnalyzer.ResourceProvider` / `StyleProvider` / `ProjectFiles` | C2, P2 | Mutable `Func` properties set after construction (temporal coupling) |
 | Files over 400 lines: `XamlAnalyzer.cs` (~930), `Selectors.cs`, `Assets.cs` (check with `wc -l`) | U1 | Split by sub-domain when a plan next changes them |
 | `Targets.CodeFiles`, `Targets.AddLocation` | U4 | Walk the folder and re-read C# files instead of using `FileIndex` and `FileFactsCache` |
 | Async APIs (`Targets`, `Rename`, `ProjectXaml`) | P4 | No `CancellationToken` |
