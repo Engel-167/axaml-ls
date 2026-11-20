@@ -280,6 +280,11 @@ for the inner extension.
 **Tests** (`DocumentLinkTests.cs`): absolute, `avares://` and relative values; a missing file gives no link; a URL
 (`https://…`) gives no link.
 
+**Status: done.** `Analysis/DocumentLinks.cs` uses `Assets.Resolve` directly, since F4 is not done. Plain path values
+and the path arguments of `{SvgImage …}`-like extensions are linked. `DocumentLinkTests` covers the three written
+forms, a markup argument, and missing files, URLs, other assemblies and non-path properties. In Zed, selection ranges
+are not used (tree-sitter) and document links depend on the version; README "Known limits" says so.
+
 ---
 
 ## F8. Partial semantic tokens

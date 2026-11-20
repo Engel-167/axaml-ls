@@ -64,6 +64,7 @@ public sealed class LspServer : IDisposable
             new LinkedEditingRangeHandler(documents),
             new DocumentHighlightHandler(documents),
             new SelectionRangeHandler(documents),
+            new DocumentLinkHandler(documents),
             new OnTypeFormattingHandler(documents),
             new FormattingHandler(documents, _session, range: false),
             new FormattingHandler(documents, _session, range: true),
