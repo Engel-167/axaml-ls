@@ -29,8 +29,8 @@ LSP feature) without dragging the server along.
 One thing, done well, that plays well with the rest.
 
 - **U1. One file, one domain concept.** `Hover`, `Definition`, `DocumentHighlight` and `Formatting` each get their
-  own file. A file that grows past about 400 lines, or does two jobs, is split (`Features.cs` and `LspServer.cs` are
-  the current offenders).
+  own file. A file that grows past about 400 lines, or does two jobs, is split, the way `LspServer` became
+  `Lsp/Handlers/` and `Features` became `Hover`, `Definition`, `Completion/` and friends.
 - **U2. An LSP handler only translates.** It turns JSON parameters into domain inputs, calls one analysis function,
   and turns the result back into JSON. Logic does not live in handlers.
 - **U3. Text in, text out at the edges.** Offsets inside the server are absolute UTF-16 offsets. Conversion to
@@ -114,12 +114,9 @@ The code speaks Avalonia, XAML and LSP, not generic plumbing.
 
 | Where | Rule | What's wrong |
 |---|---|---|
-| `Lsp/LspServer.cs` (~1000 lines) | U1, U2 | Dispatch, document store, scheduling, JSON conversion and some logic in one class |
-| `Analysis/Features.cs` (~1070 lines) | U1, D2 | Hover, definition, completion, colors and shared helpers mixed |
 | `ResourceIndex`, `ClassIndex`, `FileIndex`, `AssemblyResourceScanner`, `ThemeScanner` | P2 | `static` caches shared by every test and project |
 | `XamlAnalyzer.ResourceProvider` / `StyleProvider` / `ProjectFiles` | C2, P2 | Mutable `Func` properties set after construction (temporal coupling) |
-| `Analysis/SelectorHover.cs:104` | P4 | `GetAwaiter().GetResult()` on `Targets.OccurrencesAsync` |
+| Files over 400 lines: `XamlAnalyzer.cs` (~930), `Selectors.cs`, `Assets.cs` (check with `wc -l`) | U1 | Split by sub-domain when a plan next changes them |
 | `Targets.CodeFiles`, `Targets.AddLocation` | U4 | Walk the folder and re-read C# files instead of using `FileIndex` and `FileFactsCache` |
 | `FileIndex` | P5 | Owns its `FileSystemWatcher`, so tests poll with `Thread.Sleep` |
 | Async APIs (`Targets`, `Rename`, `ProjectXaml`) | P4 | No `CancellationToken` |
-| `Directory.Build.props` | I2 | No analyzers, no `.editorconfig`, warnings not enforced |

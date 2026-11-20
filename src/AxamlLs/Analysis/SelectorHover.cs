@@ -101,7 +101,7 @@ public static partial class Selectors
     {
         var origin = new XamlFile(analyzer.DocumentPath ?? "", analyzer.Result.Doc.Text, analyzer, new LineIndex(analyzer.Result.Doc.Text));
         var files = analyzer.ProjectFiles?.Invoke() ?? [origin];
-        var uses = Targets.OccurrencesAsync(new StyleClassTarget(cls), origin, files, null).GetAwaiter().GetResult().Where(o => !o.IsSelector).ToList();
+        var uses = Targets.TextOccurrences(new StyleClassTarget(cls), origin, files, analyzer.ProjectDirectory).Where(o => !o.IsSelector).ToList();
         if (uses.Count == 0) return $"Style class `{cls}`: no element in the project sets it.";
         var lines = uses.Take(5).Select(o =>
         {

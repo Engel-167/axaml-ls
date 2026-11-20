@@ -98,6 +98,8 @@ Options the server reads from `lsp.axaml-ls.initialization_options`:
 
 ## Development
 
+Code follows [`docs/ENGINEERING.md`](docs/ENGINEERING.md) (CUPID rules, definition of done, known deviations).
+
 Everything is pinned with [mise](https://mise.jdx.dev) (`mise install` gets the .NET SDK).
 
 | Task | What it does |
@@ -107,6 +109,7 @@ Everything is pinned with [mise](https://mise.jdx.dev) (`mise install` gets the 
 | `mise run check -- <dir>` | Lint `.axaml` files from the terminal, compiler style. Exits 1 on errors, so it also works in CI |
 | `scripts/lsp-*.py` | Probes against the installed server and a real project: `lsp-probe` (completion), `lsp-hints`, `lsp-diagnostics` (hunt false positives), `lsp-references` (references; `rename` prints a WorkspaceEdit, never applies it), `lsp-codeactions` (quick fixes for errors introduced in memory), `lsp-request` (outline, folding, code lens, type definition, implementation, hover) |
 | `mise run smoke` | Drive the server over LSP stdio like an editor (`scripts/lsp-smoke.py`) |
+| `mise run ci` | What the `ci` workflow runs on every push: build with warnings as errors, then the tests |
 | `mise run package` | Build the release zip locally (`dist/axaml-ls-<version>.zip`), the same as CI |
 
 Releases: bump `<Version>` in `src/AxamlLs/AxamlLs.csproj`, then push a tag `v<version>`. The `release` workflow tests,

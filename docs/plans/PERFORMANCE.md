@@ -286,11 +286,11 @@ means a full Roslyn `SymbolFinder` search and the analysis of every project file
    - `CodeRenames.DetectAsync`
    - `ProjectHost.EnsureLoadedAsync(ct)`: the *wait* is cancellable, the load itself keeps going for the next caller
 3. Synchronous loops that can be long check the token every N items (N = 256). That covers `Assets.Complete`'s deep
-   scan and `Features.Complete` over types.
+   scan and `Completion.At` over types.
 4. **Content modified** (LSP `-32801`): for `semanticTokens`, `inlayHint` and `codeLens`, if the document version
    changed between the start and the end of the computation, answer `ContentModified` instead of stale data.
-5. Remove the last sync-over-async: `SelectorHover.cs:104` uses a synchronous occurrence search for the origin file,
-   so add a `Targets.OccurrencesInFiles` that has no async part.
+5. ~~Remove the last sync-over-async~~ (done): the class hover uses `Targets.TextOccurrences`, the synchronous part
+   of `OccurrencesAsync`.
 
 **Tests** (`CancellationTests.cs`):
 - A pre-cancelled token makes `OccurrencesAsync` throw `OperationCanceledException` before analysing any file (via

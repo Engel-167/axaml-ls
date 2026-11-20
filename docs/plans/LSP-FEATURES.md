@@ -30,6 +30,10 @@ or try it with `--verbose`. If Zed ignores a method, still build it (other edito
 
 ## F0. Handler split and document store (no behavior change)
 
+**Status: done** (commits 5944606 and d75e4c5). `LspServer.cs` is 188 lines and `Lsp/Handlers/` holds one class per
+method. `Features` became `Hover`, `Definition`, `Completion/`, `DocumentColors`, `PropertyLookup`, `ResourceValues`,
+`SymbolDocs` and `SelfClosingTag`; the facade is gone. Not done yet: the bench (performance P0.1), which arrives with P0.
+
 **Why:** `LspServer.cs` is about 1,000 lines. It mixes JSON-RPC dispatch, the open-document store, diagnostics
 scheduling, capability negotiation and per-method JSON conversion. Every new feature would make it longer (violates
 Unix U1, U2). `Features.cs` (about 1,070 lines) mixes hover, definition, completion and colors (U1, D2).
@@ -225,10 +229,10 @@ a property element, and a comment.
 **Build:** `Analysis/MarkupSignatures.cs`.
 - At the cursor inside `{Ext …}`, find the extension type. Use the built-ins Avalonia knows (`Binding`,
   `CompiledBinding`, `StaticResource`, `DynamicResource`, `TemplateBinding`, `x:Static`, `x:Type`, `RelativeSource`,
-  `OnPlatform`, `OnFormFactor`) plus the custom extensions found by `Features.CustomMarkupExtensions`.
+  `OnPlatform`, `OnFormFactor`) plus the custom extensions found by `Completion.CustomMarkupExtensions`.
 - Offer one `SignatureInformation` per public constructor, with positional parameters (`{StaticResource ResourceKey}`)
   and settable properties listed as named parameters (`Path`, `Mode`, `Converter`, `ConverterParameter`,
-  `StringFormat`, `FallbackValue`, …). Documentation comes from `Features.Summary` (C# doc comments).
+  `StringFormat`, `FallbackValue`, …). Documentation comes from `SymbolDocs.Summary` (C# doc comments).
 - `activeParameter` is the index of the argument the cursor is in. For a named argument, it is the index of that
   property in the list.
 - Trigger characters: `{`, `,`, and space after the extension name. Retrigger on `=`.
@@ -314,7 +318,7 @@ Refactorings, in this order:
 3. **Extract to resource** (`refactor.extract`): a literal value (color, thickness, number, string) becomes
    `<SolidColorBrush x:Key="…"/>`, `<Thickness x:Key>…`, `<x:Double>` and so on, placed in the nearest `Resources`
    (or a new `<UserControl.Resources>`). The value is replaced by `{StaticResource Key}`.
-   - The type comes from `Features.TargetProperty` → value type. If the type is unknown, the refactoring is not
+   - The type comes from `PropertyLookup.TargetProperty` → value type. If the type is unknown, the refactoring is not
      offered (P7).
    - The key is derived from the property (`ButtonBackgroundBrush`) and made unique against `ResourceIndex`.
    - The editor's rename then lets the user change it: return the key range so the client can start a rename where

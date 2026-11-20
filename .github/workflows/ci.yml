@@ -1,0 +1,28 @@
+# Every push and pull request: build with warnings as errors (docs/ENGINEERING.md I2), run the tests,
+# and talk LSP to the server once (the same check as `mise run smoke`).
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build
+        run: dotnet build AxamlLs.slnx -c Debug -warnaserror
+      - name: Test
+        run: |
+          dotnet restore samples/SampleApp/SampleApp.csproj
+          dotnet test tests/AxamlLs.Tests/AxamlLs.Tests.csproj --no-build
+      - name: Smoke
+        run: timeout 300 python3 scripts/lsp-smoke.py dotnet src/AxamlLs/bin/Debug/net10.0/AxamlLs.dll -- samples/SampleApp/Views/MainView.axaml

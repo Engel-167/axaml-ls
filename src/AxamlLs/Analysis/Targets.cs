@@ -159,8 +159,23 @@ public static class Targets
     /// </summary>
     public static async Task<List<Occurrence>> OccurrencesAsync(Target target, XamlFile origin, IReadOnlyList<XamlFile> files, ProjectHost? host)
     {
+        var result = TextOccurrences(target, origin, files, host?.ProjectDirectory ?? origin.Analyzer.ProjectDirectory);
+        if (target is SymbolTarget s && host?.Solution != null)
+        {
+            await CodeSymbolOccurrencesAsync(s.Symbol, host, result).ConfigureAwait(false);
+            result = Ordered(result);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// The occurrences found by reading text: everything for element names, resource keys and style classes (XAML plus
+    /// string literals in C#), and only the XAML uses of a C# symbol (its C# references need Roslyn, see
+    /// <see cref="OccurrencesAsync"/>). Synchronous, so hover can use it without blocking on a task.
+    /// </summary>
+    public static List<Occurrence> TextOccurrences(Target target, XamlFile origin, IReadOnlyList<XamlFile> files, string? projectDir)
+    {
         var result = new List<Occurrence>();
-        var projectDir = host?.ProjectDirectory ?? origin.Analyzer.ProjectDirectory;
         switch (target)
         {
             case ElementNameTarget n:
@@ -188,11 +203,13 @@ public static class Targets
                 break;
             case SymbolTarget s:
                 foreach (var f in files) SymbolOccurrencesIn(s.Symbol, f, result);
-                if (host?.Solution != null) await CodeSymbolOccurrencesAsync(s.Symbol, host, result).ConfigureAwait(false);
                 break;
         }
-        return result.DistinctBy(o => (o.Path, o.Start, o.End)).OrderBy(o => o.Path, StringComparer.Ordinal).ThenBy(o => o.Start).ToList();
+        return Ordered(result);
     }
+
+    private static List<Occurrence> Ordered(List<Occurrence> found) =>
+        [.. found.DistinctBy(o => (o.Path, o.Start, o.End)).OrderBy(o => o.Path, StringComparer.Ordinal).ThenBy(o => o.Start)];
 
     private static void ElementNameOccurrences(string name, XamlFile file, List<Occurrence> result)
     {

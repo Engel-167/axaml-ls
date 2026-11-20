@@ -19,6 +19,14 @@ run = [
   "dotnet test tests/AxamlLs.Tests/AxamlLs.Tests.csproj",
 ]
 
+[tasks.ci]
+description = "What CI runs: build with warnings as errors, then the tests"
+run = [
+  "dotnet build AxamlLs.slnx -c Debug -warnaserror",
+  "dotnet restore samples/SampleApp/SampleApp.csproj",
+  "dotnet test tests/AxamlLs.Tests/AxamlLs.Tests.csproj --no-build",
+]
+
 [tasks.smoke]
 description = "Talk LSP to the server like an editor would, on a sample file"
 depends = ["build"]
