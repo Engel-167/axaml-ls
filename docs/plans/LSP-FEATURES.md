@@ -242,6 +242,12 @@ Skip ranges equal to the previous one. Handle several positions per request, as 
 **Tests** (`SelectionRangeTests.cs`): chains for a binding inside a nested extension, a plain attribute, an element in
 a property element, and a comment.
 
+**Status: done.** `Analysis/SelectionRanges.cs` and `Lsp/Handlers/SelectionRangeHandler.cs`.
+- Beyond the list above, a parent's content is offered twice: first trimmed of its surrounding whitespace (the
+  children), then whole.
+- A tag name or text content takes the place of the attribute step.
+- Tests: `SelectionRangeTests` (the four chains above) and a request with two positions.
+
 ---
 
 ## F6. Markup extension argument hints
