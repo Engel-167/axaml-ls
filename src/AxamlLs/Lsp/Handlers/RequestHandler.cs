@@ -45,6 +45,27 @@ internal abstract class SyncRequestHandler : IRequestHandler
     protected abstract JsonNode? Handle(JsonObject parameters);
 }
 
+/// <summary>
+/// Answers <c>ContentModified</c> (-32801) instead of a result computed for a version of the document that an edit
+/// replaced meanwhile. For answers the editor keeps and draws (semantic tokens, inlay hints, code lenses): a stale one
+/// would sit at the wrong place until the next request.
+/// </summary>
+internal sealed class ContentModifiedGuard(IRequestHandler inner, Documents documents) : IRequestHandler
+{
+    public string Method => inner.Method;
+
+    public void Advertise(JsonObject capabilities) => inner.Advertise(capabilities);
+
+    public async Task<JsonNode?> HandleAsync(JsonObject parameters, CancellationToken ct)
+    {
+        if (!documents.TryGet(Protocol.DocumentUri(parameters), out var doc)) return await inner.HandleAsync(parameters, ct).ConfigureAwait(false);
+        var before = doc.CurrentVersion;
+        var result = await inner.HandleAsync(parameters, ct).ConfigureAwait(false);
+        if (doc.CurrentVersion != before) throw new ContentModifiedException();
+        return result;
+    }
+}
+
 internal static class DocumentRequests
 {
     /// <summary>The open document a request is about, analysed at its current version; false when it isn't open.</summary>

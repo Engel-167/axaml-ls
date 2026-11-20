@@ -10,21 +10,21 @@ internal sealed record TargetContext(OpenDocument Doc, XamlFile Origin, IReadOnl
 /// <summary>Finds the target (element name, resource key, style class, C# symbol) under a request's position.</summary>
 internal sealed class TargetLookup(Documents documents, ProjectLoadProgress progress)
 {
-    public async Task<TargetContext?> AtAsync(JsonObject p)
+    public async Task<TargetContext?> AtAsync(JsonObject p, CancellationToken ct)
     {
         if (!documents.TryGet(Protocol.DocumentUri(p), out var doc)) return null;
         var host = documents.HostFor(doc);
         if (host != null)
         {
             progress.Announce(host);
-            await host.EnsureLoadedAsync().ConfigureAwait(false);
+            await host.EnsureLoadedAsync(ct).ConfigureAwait(false);
         }
         var analysis = documents.Analyze(doc);
         var offset = Protocol.Offset(analysis.Lines, p["position"]!);
         if (Targets.Find(analysis.Analyzer, offset) is not { } found) return null;
         var origin = new XamlFile(doc.Path, analysis.Analyzer.Result.Doc.Text, analysis.Analyzer, analysis.Lines);
         // Only files that can mention the target are analysed (an element name needs none: it stays in its file).
-        IReadOnlyList<XamlFile> files = host?.Current != null ? documents.ProjectFiles(host, mentioning: Targets.CandidateNames(found, origin.Text)) : [origin];
+        IReadOnlyList<XamlFile> files = host?.Current != null ? documents.ProjectFiles(host, mentioning: Targets.CandidateNames(found, origin.Text), ct: ct) : [origin];
         return new TargetContext(doc, origin, files, host, found);
     }
 }
@@ -39,10 +39,10 @@ internal sealed class ReferencesHandler(Documents documents, TargetLookup target
     public async Task<JsonNode?> HandleAsync(JsonObject p, CancellationToken ct)
     {
         var array = new JsonArray();
-        if (await targets.AtAsync(p).ConfigureAwait(false) is not { } ctx) return array;
+        if (await targets.AtAsync(p, ct).ConfigureAwait(false) is not { } ctx) return array;
         var includeDeclaration = (bool?)p["context"]?["includeDeclaration"] ?? true;
         var textOf = documents.TextProvider();
-        foreach (var o in await Targets.OccurrencesAsync(ctx.Found.Target, ctx.Origin, ctx.Files, ctx.Host).ConfigureAwait(false))
+        foreach (var o in await Targets.OccurrencesAsync(ctx.Found.Target, ctx.Origin, ctx.Files, ctx.Host, ct).ConfigureAwait(false))
         {
             if (o.IsDeclaration && !includeDeclaration) continue;
             array.Add(new JsonObject { ["uri"] = Protocol.PathToUri(o.Path), ["range"] = Protocol.Range(textOf(o.Path).Lines, o.Start, o.End) });
@@ -62,7 +62,7 @@ internal sealed class PrepareRenameHandler(TargetLookup targets) : IRequestHandl
 
     public async Task<JsonNode?> HandleAsync(JsonObject p, CancellationToken ct)
     {
-        if (await targets.AtAsync(p).ConfigureAwait(false) is not { } ctx || !Rename.CanRename(ctx.Found.Target)) return null;
+        if (await targets.AtAsync(p, ct).ConfigureAwait(false) is not { } ctx || !Rename.CanRename(ctx.Found.Target)) return null;
         return new JsonObject
         {
             ["range"] = Protocol.Range(ctx.Origin.Lines, ctx.Found.Start, ctx.Found.End),
@@ -81,9 +81,9 @@ internal sealed class RenameHandler(Documents documents, TargetLookup targets) :
     public async Task<JsonNode?> HandleAsync(JsonObject p, CancellationToken ct)
     {
         var newName = (string?)p["newName"] ?? "";
-        if (await targets.AtAsync(p).ConfigureAwait(false) is not { } ctx) return null;
+        if (await targets.AtAsync(p, ct).ConfigureAwait(false) is not { } ctx) return null;
         if (!Rename.CanRename(ctx.Found.Target)) throw new InvalidParamsException("This name is declared in a library and cannot be renamed here.");
-        var result = await Rename.ComputeAsync(ctx.Found.Target, newName, ctx.Origin, ctx.Files, ctx.Host).ConfigureAwait(false);
+        var result = await Rename.ComputeAsync(ctx.Found.Target, newName, ctx.Origin, ctx.Files, ctx.Host, ct).ConfigureAwait(false);
         if (result.Error != null) throw new InvalidParamsException(result.Error);
         var projectDir = ctx.Host?.ProjectDirectory ?? ctx.Origin.Analyzer.ProjectDirectory;
         return Edits.ToWorkspaceEdit(Rename.InsideProject(result.Edits, projectDir), documents.TextProvider());

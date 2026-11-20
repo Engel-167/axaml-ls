@@ -95,9 +95,13 @@ internal static class ErrorCodes
     public const int MethodNotFound = -32601;
     public const int InternalError = -32603;
     public const int RequestCancelled = -32800;
+    public const int ContentModified = -32801;
 
     public static JsonObject Error(int code, string message) => new() { ["code"] = code, ["message"] = message };
 }
 
 /// <summary>The request was understood but its arguments cannot be used (an invalid new name): answered as -32602.</summary>
 internal sealed class InvalidParamsException(string message) : Exception(message);
+
+/// <summary>The document changed while the answer was computed, so the answer is stale: answered as -32801.</summary>
+internal sealed class ContentModifiedException() : Exception("Content modified");

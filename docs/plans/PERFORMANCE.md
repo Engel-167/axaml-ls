@@ -437,6 +437,28 @@ means a full Roslyn `SymbolFinder` search and the analysis of every project file
 **Done when:** bench `cancel` shows the server idle (no CPU, measured with `request.duration` of the cancelled
 request) within 20 ms of the cancel.
 
+**Status: done.**
+- The request token now reaches:
+  - `TargetLookup` → `ProjectHost.EnsureLoadedAsync(ct)` (only the wait is cancelled; the load runs on for the next
+    caller);
+  - `ProjectXaml.Files` (checked before each file);
+  - `Targets.OccurrencesAsync` / `CodeReferencesOfAsync` → `SymbolFinder.FindReferencesAsync`;
+  - `Rename.ComputeAsync` → `Renamer.RenameSymbolAsync`, `GetTextAsync`, `GetTextChangesAsync`.
+  `catch (Exception)` around Roslyn no longer swallows cancellation.
+- `ContentModifiedGuard` (in `Lsp/Handlers/RequestHandler.cs`) wraps semantic tokens, inlay hints and code lenses. It
+  answers `-32801` when the document version changed while the handler ran.
+- Not done: the synchronous completion paths (the deep asset scan and the type loops) take no token. On the 33k-file
+  bench project, `complete-asset` takes 2–3 ms in total, so the check at handler entry is enough. Revisit if a profile
+  shows a long completion.
+- Tests (`CancellationTests`):
+  - a cancelled project scan stops before the first file;
+  - cancelled key and symbol searches, and a cancelled rename, throw;
+  - a cancelled load wait leaves the load running;
+  - an edit during a guarded handler yields `ContentModifiedException`.
+- Bench `cancel` (a references request cancelled after 5 ms): all 40 answered `-32800`, median 11 ms and p95 18 ms
+  after the request, so the server is idle within about 6–13 ms of the cancel (target: 20 ms). `main` takes a median
+  of 22 ms.
+
 ---
 
 ## P6. Smaller image previews

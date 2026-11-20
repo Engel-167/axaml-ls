@@ -22,6 +22,15 @@ internal sealed class OpenDocument
     public string Text { get; set; } = "";
     public int Version { get; set; }
 
+    /// <summary><see cref="Version"/>, read under the document's lock.</summary>
+    public int CurrentVersion
+    {
+        get
+        {
+            lock (this) return Version;
+        }
+    }
+
     /// <summary>The scheduled diagnostics run, cancelled by the next one (under <c>lock (doc)</c>).</summary>
     public CancellationTokenSource? Pending { get; set; }
 
@@ -145,8 +154,10 @@ internal sealed class Documents(WorkspaceManager workspace, ProjectLoadProgress 
     /// <param name="host">The project.</param>
     /// <param name="buffers">Open buffers, when the caller already took them.</param>
     /// <param name="mentioning">Only the files that may mention one of these names (see <see cref="ProjectXaml.Files"/>).</param>
-    public IReadOnlyList<XamlFile> ProjectFiles(ProjectHost host, IReadOnlyDictionary<string, string>? buffers = null, IReadOnlyCollection<string>? mentioning = null) =>
-        _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, buffers ?? OpenBuffers(), mentioning);
+    /// <param name="ct">Stops between files.</param>
+    public IReadOnlyList<XamlFile> ProjectFiles(ProjectHost host, IReadOnlyDictionary<string, string>? buffers = null, IReadOnlyCollection<string>? mentioning = null,
+        CancellationToken ct = default) =>
+        _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, buffers ?? OpenBuffers(), mentioning, ct);
 
     /// <summary>
     /// Text of a file as edits and locations must see it: the open buffer if there is one, else the disk.

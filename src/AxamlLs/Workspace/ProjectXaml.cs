@@ -22,7 +22,9 @@ public sealed class ProjectXaml
     /// <param name="openBuffers">Unsaved editor contents by path; they win over the disk.</param>
     /// <param name="mentioning">When given, only files whose words may include one of these names are analysed and
     /// returned (see <see cref="ProjectIndexes.MayMention"/>); the others are not even read when their words are cached.</param>
-    public IReadOnlyList<XamlFile> Files(ProjectHost host, IReadOnlyDictionary<string, string> openBuffers, IReadOnlyCollection<string>? mentioning = null)
+    /// <param name="ct">Checked before each file: a cancelled search stops without analysing the rest.</param>
+    public IReadOnlyList<XamlFile> Files(ProjectHost host, IReadOnlyDictionary<string, string> openBuffers, IReadOnlyCollection<string>? mentioning = null,
+        CancellationToken ct = default)
     {
         var project = host.Current;
         var index = host.Indexes.Files;
@@ -36,6 +38,7 @@ public sealed class ProjectXaml
         var result = new List<XamlFile>();
         foreach (var path in paths.Order(StringComparer.Ordinal))
         {
+            ct.ThrowIfCancellationRequested();
             if (mentioning != null && !host.Indexes.MayMention(path, openBuffers, mentioning)) continue;
             try
             {

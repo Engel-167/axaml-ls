@@ -57,14 +57,14 @@ public sealed class LspServer : IDisposable
             new CompletionHandler(documents),
             new CompletionResolveHandler(),
             new CodeActionHandler(documents),
-            new CodeLensHandler(documents),
+            new ContentModifiedGuard(new CodeLensHandler(documents), documents),
             new ExecuteCommandHandler(_client),
             new DocumentSymbolHandler(documents),
             new FoldingRangeHandler(documents),
             new LinkedEditingRangeHandler(documents),
             new OnTypeFormattingHandler(documents),
-            new InlayHintHandler(documents, _session),
-            new SemanticTokensHandler(documents),
+            new ContentModifiedGuard(new InlayHintHandler(documents, _session), documents),
+            new ContentModifiedGuard(new SemanticTokensHandler(documents), documents),
             new DocumentColorHandler(documents),
             new ColorPresentationHandler(),
         ];
@@ -141,6 +141,10 @@ public sealed class LspServer : IDisposable
         catch (InvalidParamsException ex)
         {
             error = ErrorCodes.Error(ErrorCodes.InvalidParams, ex.Message);
+        }
+        catch (ContentModifiedException ex)
+        {
+            error = ErrorCodes.Error(ErrorCodes.ContentModified, ex.Message);
         }
         catch (Exception ex)
         {

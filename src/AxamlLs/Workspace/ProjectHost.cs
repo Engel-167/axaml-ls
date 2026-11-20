@@ -57,12 +57,14 @@ public sealed class ProjectHost : IDisposable
         _debounce = new Timer(_ => _ = ApplyPendingAsync(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
-    public Task EnsureLoadedAsync()
+    /// <summary>Starts loading the project if nobody did, and waits for it.</summary>
+    /// <param name="ct">Ends the wait only: the load keeps going for the next caller.</param>
+    public Task EnsureLoadedAsync(CancellationToken ct = default)
     {
         lock (_loadLock)
         {
-            _loadTask ??= Task.Run(LoadAsync);
-            return _loadTask;
+            _loadTask ??= Task.Run(LoadAsync, CancellationToken.None); // the load serves every caller, not just this one
+            return ct.CanBeCanceled ? _loadTask.WaitAsync(ct) : _loadTask;
         }
     }
 

@@ -115,4 +115,4 @@ The code speaks Avalonia, XAML and LSP, not generic plumbing.
 | Where | Rule | What's wrong |
 |---|---|---|
 | Files over 400 lines: `XamlAnalyzer.cs` (~930), `Selectors.cs`, `Assets.cs` (check with `wc -l`) | U1 | Split by sub-domain when a plan next changes them |
-| Async APIs (`Targets`, `Rename`, `ProjectXaml`) | P4 | No `CancellationToken` |
+| `ProjectHost` background work (load, snapshot rebuild, rename detection) and `CodeRenameFollower` | P4 | No `CancellationToken`: no request starts them, and they stop only with the process. Request paths take one (performance plan P5) |
