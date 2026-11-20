@@ -4,16 +4,16 @@ using System.IO.Enumeration;
 namespace AxamlLs.Workspace;
 
 /// <summary>
-/// The files of one project folder, listed once and then kept current by a single <see cref="FileSystemWatcher"/>
-/// (the "virtual file system" approach of rust-analyzer and VS Code): every index, completion and diagnostic reads
-/// this list instead of walking the disk again.
+/// The files of one project folder, listed once and then kept current by an <see cref="IFileChangeSource"/> (a
+/// <see cref="FileSystemWatcher"/> in the server: the "virtual file system" approach of rust-analyzer and VS Code):
+/// every index, completion and diagnostic reads this list instead of walking the disk again.
 /// <list type="bullet">
 /// <item>Build output, VCS and tool folders (<c>bin</c>, <c>obj</c>, <c>node_modules</c>, <c>.git</c>, any dot-folder)
 /// are pruned during the walk, so they are never descended into (MSBuild's default globs skip the same ones).</item>
 /// <item><see cref="Generation"/> changes whenever a file below the root is created, changed, deleted or renamed.
 /// Caches keyed by it skip even the per-file timestamp checks while nothing changed.</item>
-/// <item>When the watcher cannot be created (inotify limit) or overflows, the index falls back to treating its
-/// contents as valid for one second at a time, so results are never stale for long.</item>
+/// <item>When the change source is not reliable (no watcher: inotify limit), the index treats its contents as valid
+/// for one second at a time, so results are never stale for long. When it overflows, everything is relisted.</item>
 /// </list>
 /// </summary>
 public sealed class FileIndex : IDisposable
@@ -23,7 +23,9 @@ public sealed class FileIndex : IDisposable
     private const long FallbackTtlMs = 1000;
 
     private readonly object _gate = new();
-    private readonly FileSystemWatcher? _watcher;
+    private readonly IFileChangeSource _changes;
+    private readonly TimeProvider _time;
+    private readonly long _created;
     private readonly ConcurrentDictionary<string, string[]> _byExtension = new(StringComparer.OrdinalIgnoreCase);
     private long _generation;
     private long _structureGeneration;
@@ -33,56 +35,40 @@ public sealed class FileIndex : IDisposable
 
     public string Root { get; }
 
-    /// <summary>Raised (on a watcher thread) for each change to a file outside the pruned folders.</summary>
-    public event Action<FileSystemEventArgs>? Changed;
+    /// <summary>Raised (on the change source's thread) with the changes to files outside the pruned folders.</summary>
+    public event Action<IReadOnlyList<FileChange>>? Changed;
 
-    private FileIndex(string root)
+    /// <summary>Raised when changes may have been lost; listeners must revalidate what they derived from files.</summary>
+    public event Action? Overflowed;
+
+    /// <param name="root">The folder, as a full path without a trailing separator.</param>
+    /// <param name="changes">Reports changes below <paramref name="root"/>; the index disposes it.</param>
+    /// <param name="time">The clock for the fallback refresh when <paramref name="changes"/> is not reliable.</param>
+    internal FileIndex(string root, IFileChangeSource changes, TimeProvider time)
     {
         Root = root;
-        try
-        {
-            _watcher = new FileSystemWatcher(root)
-            {
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size,
-                InternalBufferSize = 64 * 1024,
-            };
-            _watcher.Changed += (_, e) => OnEvent(e, structural: false);
-            _watcher.Created += (_, e) => OnEvent(e, structural: true);
-            _watcher.Deleted += (_, e) => OnEvent(e, structural: true);
-            _watcher.Renamed += (_, e) =>
-            {
-                OnEvent(new FileSystemEventArgs(WatcherChangeTypes.Deleted, Path.GetDirectoryName(e.OldFullPath)!, Path.GetFileName(e.OldFullPath)), structural: true);
-                OnEvent(e, structural: true);
-            };
-            _watcher.Error += (_, e) =>
-            {
-                // Overflow: events were lost, so nothing cached can be trusted.
-                Log.Info($"File watcher for {root} lost events ({e.GetException().Message}); rescanning");
-                Interlocked.Increment(ref _generation);
-                Interlocked.Increment(ref _structureGeneration);
-            };
-            _watcher.EnableRaisingEvents = true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error($"Cannot watch {root}; file lists will be refreshed every second instead", ex);
-            _watcher?.Dispose();
-            _watcher = null;
-        }
+        _changes = changes;
+        _time = time;
+        _created = time.GetTimestamp();
+        changes.Changed += OnChanges;
+        changes.Overflowed += OnOverflow;
     }
 
     /// <summary>The index of a folder (created, listed lazily and watched on first use).</summary>
     public static FileIndex For(string root)
     {
         root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        return Indexes.GetOrAdd(root, r => new FileIndex(r));
+        return Indexes.GetOrAdd(root, r => new FileIndex(r, new FileSystemChangeSource(r), TimeProvider.System));
     }
 
-    /// <summary>Changes whenever anything below the root changes. Without a watcher it changes every second.</summary>
-    public long Generation => _watcher == null ? Volatile.Read(ref _generation) + Environment.TickCount64 / FallbackTtlMs : Volatile.Read(ref _generation);
+    /// <summary>Changes whenever anything below the root changes. Without a reliable change source it changes every second.</summary>
+    public long Generation => Volatile.Read(ref _generation) + FallbackTick();
 
-    private long StructureGeneration => _watcher == null ? Environment.TickCount64 / FallbackTtlMs : Volatile.Read(ref _structureGeneration);
+    private long StructureGeneration => Volatile.Read(ref _structureGeneration) + FallbackTick();
+
+    /// <summary>Seconds since creation when changes can be missed, else 0.</summary>
+    private long FallbackTick() =>
+        _changes.Reliable ? 0 : (long)_time.GetElapsedTime(_created).TotalMilliseconds / FallbackTtlMs;
 
     /// <summary>Every file below the root, outside pruned folders, sorted ordinally.</summary>
     public IReadOnlyList<string> Files => Snapshot().Files;
@@ -179,14 +165,15 @@ public sealed class FileIndex : IDisposable
         Log.Debug($"Indexed {files.Length} files under {Root}");
     }
 
-    private void OnEvent(FileSystemEventArgs e, bool structural)
+    private void OnChanges(IReadOnlyList<FileChange> changes)
     {
-        if (IsPruned(e.FullPath)) return;
+        var relevant = changes.Where(c => !IsPruned(c.Path)).ToList();
+        if (relevant.Count == 0) return;
         Interlocked.Increment(ref _generation);
-        if (structural) Interlocked.Increment(ref _structureGeneration);
+        if (relevant.Any(c => c.Kind != FileChangeKind.Changed)) Interlocked.Increment(ref _structureGeneration);
         try
         {
-            Changed?.Invoke(e);
+            Changed?.Invoke(relevant);
         }
         catch (Exception ex)
         {
@@ -194,9 +181,26 @@ public sealed class FileIndex : IDisposable
         }
     }
 
+    private void OnOverflow()
+    {
+        // Events were lost, so nothing cached can be trusted.
+        Interlocked.Increment(ref _generation);
+        Interlocked.Increment(ref _structureGeneration);
+        try
+        {
+            Overflowed?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("File overflow handler failed", ex);
+        }
+    }
+
     public void Dispose()
     {
-        _watcher?.Dispose();
+        _changes.Changed -= OnChanges;
+        _changes.Overflowed -= OnOverflow;
+        _changes.Dispose();
         Indexes.TryRemove(new KeyValuePair<string, FileIndex>(Root, this));
     }
 }

@@ -120,6 +120,15 @@ internal interface IFileChangeSource
   `Microsoft.Extensions.TimeProvider.Testing`, a test-only package; that is the C5 reason. Rewrite
   `File_index_prunes_build_folders_and_sees_new_files` without `Thread.Sleep`.
 
+**Status: done.**
+- `Workspace/FileChanges.cs` holds `FileChange`, `IFileChangeSource` and `FileSystemChangeSource`.
+- The interface has one addition: `bool Reliable`. Without a watcher (the inotify limit) the index has to know to
+  fall back to its one-second refresh.
+- `FileIndex` forwards overflow as its own `Overflowed` event. `ProjectHost` reloads the project on it, because
+  C# changes may have been lost (before, an overflow only reset the file caches).
+- Tests: no `Thread.Sleep` is left. The index tests drive `TestFileChangeSource` and `FakeTimeProvider`. One test
+  awaits a real watcher's rename event (an event with a timeout, not polling).
+
 ### P0.4 Project-owned indexes (Predictable P2, Composable C2)
 
 - New `Workspace/ProjectIndexes.cs`: one instance per project folder, owned by `WorkspaceManager`. It holds the

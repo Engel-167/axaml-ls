@@ -118,5 +118,4 @@ The code speaks Avalonia, XAML and LSP, not generic plumbing.
 | `XamlAnalyzer.ResourceProvider` / `StyleProvider` / `ProjectFiles` | C2, P2 | Mutable `Func` properties set after construction (temporal coupling) |
 | Files over 400 lines: `XamlAnalyzer.cs` (~930), `Selectors.cs`, `Assets.cs` (check with `wc -l`) | U1 | Split by sub-domain when a plan next changes them |
 | `Targets.CodeFiles`, `Targets.AddLocation` | U4 | Walk the folder and re-read C# files instead of using `FileIndex` and `FileFactsCache` |
-| `FileIndex` | P5 | Owns its `FileSystemWatcher`, so tests poll with `Thread.Sleep` |
 | Async APIs (`Targets`, `Rename`, `ProjectXaml`) | P4 | No `CancellationToken` |

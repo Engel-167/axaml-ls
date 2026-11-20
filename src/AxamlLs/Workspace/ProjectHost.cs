@@ -120,31 +120,40 @@ public sealed class ProjectHost : IDisposable
         }
     }
 
-    /// <summary>Follows .cs and project file changes through the folder's shared <see cref="FileIndex"/> watcher.</summary>
+    /// <summary>Follows .cs and project file changes through the folder's shared <see cref="FileIndex"/>.</summary>
     private void StartWatching()
     {
         if (_files != null) return;
         _files = FileIndex.For(ProjectDirectory);
-        _files.Changed += OnFileEvent;
+        _files.Changed += OnFileChanges;
+        _files.Overflowed += OnFilesOverflowed;
     }
 
-    private void OnFileEvent(FileSystemEventArgs e)
+    private void OnFileChanges(IReadOnlyList<FileChange> changes)
     {
-        var path = e.FullPath;
-        if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+        var relevant = false;
+        foreach (var (path, _) in changes)
         {
-            _pendingFiles[path] = 0;
+            if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+            {
+                _pendingFiles[path] = 0;
+                relevant = true;
+            }
+            else if (path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".props", StringComparison.OrdinalIgnoreCase) ||
+                     path.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
+            {
+                _reloadRequested = true;
+                relevant = true;
+            }
         }
-        else if (path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".props", StringComparison.OrdinalIgnoreCase) ||
-                 path.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
-        {
-            _reloadRequested = true;
-        }
-        else
-        {
-            return;
-        }
-        _debounce.Change(_reloadRequested ? 1500 : 350, Timeout.Infinite);
+        if (relevant) _debounce.Change(_reloadRequested ? 1500 : 350, Timeout.Infinite);
+    }
+
+    /// <summary>C# changes may have been lost, so the loaded solution may be stale: reload it.</summary>
+    private void OnFilesOverflowed()
+    {
+        _reloadRequested = true;
+        _debounce.Change(1500, Timeout.Infinite);
     }
 
     /// <summary>Lets the language server push an unsaved .cs buffer, if the editor sends one.</summary>
@@ -252,7 +261,11 @@ public sealed class ProjectHost : IDisposable
 
     public void Dispose()
     {
-        if (_files != null) _files.Changed -= OnFileEvent;
+        if (_files != null)
+        {
+            _files.Changed -= OnFileChanges;
+            _files.Overflowed -= OnFilesOverflowed;
+        }
         _debounce.Dispose();
         _workspace?.Dispose();
     }
