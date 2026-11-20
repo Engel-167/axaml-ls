@@ -30,7 +30,7 @@ or try it with `--verbose`. If Zed ignores a method, still build it (other edito
 
 ## F0. Handler split and document store (no behavior change)
 
-**Status: done** (commits 5944606 and d75e4c5). `LspServer.cs` is 188 lines and `Lsp/Handlers/` holds one class per
+**Status: done** (commits 2053e78 and e64b1db). `LspServer.cs` is 188 lines and `Lsp/Handlers/` holds one class per
 method. `Features` became `Hover`, `Definition`, `Completion/`, `DocumentColors`, `PropertyLookup`, `ResourceValues`,
 `SymbolDocs` and `SelfClosingTag`; the facade is gone. Not done yet: the bench (performance P0.1), which arrives with P0.
 
