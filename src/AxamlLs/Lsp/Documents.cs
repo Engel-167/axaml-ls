@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using AxamlLs.Analysis;
+using AxamlLs.Telemetry;
 using AxamlLs.Text;
 using AxamlLs.Workspace;
 using AxamlLs.Xaml;
@@ -41,7 +42,7 @@ internal sealed class OpenDocument
 /// The open documents and their analyses. Lock order: <see cref="OpenDocument.AnalyzeLock"/> before <c>lock (doc)</c>;
 /// a document's own lock is a leaf (nothing else is taken while holding it).
 /// </summary>
-internal sealed class Documents(WorkspaceManager workspace, ProjectLoadProgress progress)
+internal sealed class Documents(WorkspaceManager workspace, ProjectLoadProgress progress, ServerMetrics metrics)
 {
     private readonly ConcurrentDictionary<string, OpenDocument> _open = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<ProjectHost, ProjectXaml> _projectXaml = new();
@@ -103,7 +104,7 @@ internal sealed class Documents(WorkspaceManager workspace, ProjectLoadProgress 
             cached = doc.Cached; // someone may have finished it while we waited
             if (cached != null && cached.Version == version && ReferenceEquals(cached.Project, project)) return cached;
 
-            var analyzer = XamlAnalyzer.Analyze(text, project, host?.CompiledBindingsDefault ?? false);
+            var analyzer = XamlAnalyzer.Analyze(text, project, host?.CompiledBindingsDefault ?? false, metrics);
             ProjectXaml.Wire(analyzer, doc.Path, host, OpenBuffers, host == null ? null : () => ProjectFiles(host));
             var analysis = new DocumentAnalysis(version, project, analyzer, new LineIndex(text));
             doc.Cached = analysis;

@@ -110,6 +110,7 @@ Everything is pinned with [mise](https://mise.jdx.dev) (`mise install` gets the 
 | `scripts/lsp-*.py` | Probes against the installed server and a real project: `lsp-probe` (completion), `lsp-hints`, `lsp-diagnostics` (hunt false positives), `lsp-references` (references; `rename` prints a WorkspaceEdit, never applies it), `lsp-codeactions` (quick fixes for errors introduced in memory), `lsp-request` (outline, folding, code lens, type definition, implementation, hover) |
 | `mise run smoke` | Drive the server over LSP stdio like an editor (`scripts/lsp-smoke.py`) |
 | `mise run bench` | Time the server against `main`, side by side, on a generated 33k-file project; exit 1 on a regression (`scripts/bench.sh`) |
+| `dotnet-counters monitor -p <pid> --counters AxamlLs` | Live timings of the running server: analysis phases, requests per method, cancellations |
 | `mise run ci` | What the `ci` workflow runs on every push: build with warnings as errors, then the tests |
 | `mise run package` | Build the release zip locally (`dist/axaml-ls-<version>.zip`), the same as CI |
 

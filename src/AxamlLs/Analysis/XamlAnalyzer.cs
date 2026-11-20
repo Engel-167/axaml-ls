@@ -2,6 +2,7 @@ using AxamlLs.Text;
 using AxamlLs.Workspace;
 using AxamlLs.Xaml;
 using Microsoft.CodeAnalysis;
+using AxamlLs.Telemetry;
 
 namespace AxamlLs.Analysis;
 
@@ -84,17 +85,26 @@ public sealed class XamlAnalyzer
         _r = new AnalysisResult { Doc = doc, Project = _p };
     }
 
-    public static XamlAnalyzer Analyze(string text, ProjectSnapshot? project, bool compiledDefault)
+    /// <param name="text">The document text.</param>
+    /// <param name="project">The loaded project, or null to analyse the XML alone.</param>
+    /// <param name="compiledDefault">Whether bindings are compiled unless x:CompileBindings says otherwise.</param>
+    /// <param name="metrics">Receives the time of each phase (parse, wellformed, resolve), when given.</param>
+    public static XamlAnalyzer Analyze(string text, ProjectSnapshot? project, bool compiledDefault, ServerMetrics? metrics = null)
     {
+        var start = metrics?.Timestamp() ?? 0;
         var doc = XmlDoc.Parse(text);
+        metrics?.AnalysisPhaseSince(ServerMetrics.Phase.Parse, start);
         var analyzer = new XamlAnalyzer(doc, project, compiledDefault);
-        analyzer.Run(text);
+        analyzer.Run(text, metrics);
         return analyzer;
     }
 
-    private void Run(string text)
+    private void Run(string text, ServerMetrics? metrics)
     {
+        var phaseStart = metrics?.Timestamp() ?? 0;
         var xmlError = WellFormedness.Check(text);
+        metrics?.AnalysisPhaseSince(ServerMetrics.Phase.WellFormed, phaseStart);
+        phaseStart = metrics?.Timestamp() ?? 0;
         if (xmlError != null)
         {
             var lines = new LineIndex(text);
@@ -109,6 +119,7 @@ public sealed class XamlAnalyzer
         CollectNames();
         ResolveClass();
         foreach (var top in _doc.TopLevel) Visit(top, Scope.Root(_compiledDefault));
+        metrics?.AnalysisPhaseSince(ServerMetrics.Phase.Resolve, phaseStart);
     }
 
     // ---------------------------------------------------------------- pass 1: element types

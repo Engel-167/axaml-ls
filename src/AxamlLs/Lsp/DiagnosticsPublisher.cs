@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using AxamlLs.Analysis;
+using AxamlLs.Telemetry;
 using AxamlLs.Workspace;
 
 namespace AxamlLs.Lsp;
@@ -9,7 +10,7 @@ namespace AxamlLs.Lsp;
 /// Pushes diagnostics for open documents: debounced after edits, re-run when the project changes, skipped when nothing
 /// another document depends on changed, and not re-sent when identical to the last publish.
 /// </summary>
-internal sealed class DiagnosticsPublisher(Documents documents, LspClient client)
+internal sealed class DiagnosticsPublisher(Documents documents, LspClient client, ServerMetrics metrics)
 {
     /// <summary>What other files' diagnostics depend on, per project folder: style facts and the set of resource keys.</summary>
     private sealed record CrossFileFacts(ProjectStyles? Styles, HashSet<string>? Keys);
@@ -41,8 +42,10 @@ internal sealed class DiagnosticsPublisher(Documents documents, LspClient client
                 var analysis = documents.Analyze(doc);
                 if (cts.IsCancellationRequested) return;
                 var diagnostics = new JsonArray();
+                var start = metrics.Timestamp();
                 foreach (var (d, unnecessary) in DocumentDiagnostics.Collect(analysis.Analyzer))
                     diagnostics.Add(Protocol.Diagnostic(d, analysis.Lines, unnecessary));
+                metrics.AnalysisPhaseSince(ServerMetrics.Phase.Diagnostics, start);
                 if (cts.IsCancellationRequested) return;
                 if (ShouldPublish(doc, diagnostics, analysis.Analyzer.Project))
                     await client.PublishDiagnosticsAsync(doc.Uri, analysis.Version, diagnostics).ConfigureAwait(false);

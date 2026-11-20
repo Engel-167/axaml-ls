@@ -86,6 +86,18 @@ Round 1 measured with throwaway probes. Make them permanent.
 - **Done when:** `dotnet-counters monitor -n AxamlLs --counters AxamlLs` shows live numbers while typing in Zed. Add one
   test that records into a `MeterListener` and checks `request.duration` is reported for `textDocument/hover`.
 
+**Status: done, with three differences.**
+- The class is `Telemetry/ServerMetrics.cs`, not `Diagnostics/`, to keep it apart from XAML diagnostics and
+  `System.Diagnostics`.
+- Editors start the server as `dotnet AxamlLs.dll`, so the process is named `dotnet`. Use
+  `dotnet-counters monitor -p <pid> --counters AxamlLs`. This was checked against a benched server: every
+  `analysis.duration` phase and every `request.duration` method showed up.
+- `index.rebuilds` and `files.scanned` exist but have no call sites yet. They record from the project indexes,
+  which are still static, so P0.4 wires them in when `ProjectIndexes` owns those caches.
+
+`tests/AxamlLs.Tests/LspTestClient.cs` drives an in-process server over in-memory pipes, and later handler tests can
+use it.
+
 ### P0.3 Injectable file changes and time (Predictable P5, Composable C2)
 
 ```csharp
