@@ -62,8 +62,18 @@ public sealed class XamlAnalyzer
     public IReadOnlyList<ResourceEntry> Resources(string? path = null)
     {
         var own = ResourceProvider?.Invoke() ?? ResourceIndex.Scan(path ?? "", _doc.Text);
-        return _p == null ? own : [.. own, .. _p.LibraryResources];
+        if (_p == null) return own;
+        // The project's list is the same object until a key changes, and so is the library's: join them once, not per call.
+        var library = _p.LibraryResources;
+        if (JoinedResources.TryGetValue(own, out var joined) && ReferenceEquals(joined.Library, library)) return joined.All;
+        joined = new Joined(library, [.. own, .. library]);
+        JoinedResources.AddOrUpdate(own, joined);
+        return joined.All;
     }
+
+    private sealed record Joined(IReadOnlyList<ResourceEntry> Library, IReadOnlyList<ResourceEntry> All);
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<ResourceEntry>, Joined> JoinedResources = new();
     public ProjectSnapshot? Project => _p;
 
     private XamlAnalyzer(XmlDoc doc, ProjectSnapshot? project, bool compiledDefault)

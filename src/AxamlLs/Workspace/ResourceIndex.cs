@@ -18,43 +18,26 @@ public sealed record ResourceEntry(string Key, string ElementName, string FilePa
 /// </summary>
 public static class ResourceIndex
 {
-    private static readonly ConcurrentDictionary<string, (DateTime Stamp, List<ResourceEntry> Entries)> Cache = new(StringComparer.Ordinal);
+    private static readonly FileFactsCache<List<ResourceEntry>> Facts = new(Scan, SameEntries);
+    private static readonly ConcurrentDictionary<string, (List<ResourceEntry>[] Parts, List<ResourceEntry> Merged)> Merged = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Every x:Key of the project. Repeated calls with nothing changed return the same list without touching the disk
+    /// (see <see cref="FileIndex"/>); an edit that leaves a buffer's entries as they were keeps the same list too, so callers
+    /// can compare by reference to see whether anything changed.
+    /// </summary>
     public static List<ResourceEntry> ForDirectory(string directory, IReadOnlyDictionary<string, string> openBuffers)
     {
-        var result = new List<ResourceEntry>();
-        IEnumerable<string> files;
-        try
-        {
-            files = Directory.EnumerateFiles(directory, "*.axaml", SearchOption.AllDirectories).Where(f => !ProjectFiles.IsBuildOutput(f)).ToList();
-        }
-        catch (Exception)
-        {
-            files = [];
-        }
-        foreach (var file in files.Concat(openBuffers.Keys.Where(k => k.StartsWith(directory, StringComparison.Ordinal))).Distinct())
-        {
-            if (openBuffers.TryGetValue(file, out var text))
-            {
-                result.AddRange(Scan(file, text));
-                continue;
-            }
-            try
-            {
-                var stamp = File.GetLastWriteTimeUtc(file);
-                if (!Cache.TryGetValue(file, out var cached) || cached.Stamp != stamp)
-                {
-                    cached = (stamp, Scan(file, File.ReadAllText(file)));
-                    Cache[file] = cached;
-                }
-                result.AddRange(cached.Entries);
-            }
-            catch (IOException)
-            {
-            }
-        }
-        return result;
+        var index = FileIndex.For(directory);
+        var parts = Facts.Collect(index, index.WithExtensions(".axaml"), openBuffers, ".axaml");
+        if (Merged.TryGetValue(index.Root, out var last) && FileFactsCache<List<ResourceEntry>>.SameObjects(last.Parts, parts)) return last.Merged;
+        var merged = new List<ResourceEntry>(parts.Sum(p => p.Count));
+        foreach (var p in parts) merged.AddRange(p);
+        Merged[index.Root] = (parts, merged);
+        return merged;
     }
+
+    private static bool SameEntries(List<ResourceEntry> a, List<ResourceEntry> b) => a.SequenceEqual(b);
 
     public static List<ResourceEntry> Scan(string file, string text)
     {

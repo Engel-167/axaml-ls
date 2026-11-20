@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -24,7 +26,7 @@ public sealed class JsonRpc(Stream input, Stream output)
             }
             var colon = line.IndexOf(':');
             if (colon > 0 && line[..colon].Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
-                length = int.Parse(line[(colon + 1)..].Trim());
+                length = int.TryParse(line[(colon + 1)..].Trim(), out var parsed) && parsed >= 0 ? parsed : -1;
         }
 
         var buffer = new byte[length];
@@ -35,36 +37,56 @@ public sealed class JsonRpc(Stream input, Stream output)
             if (n == 0) return null;
             read += n;
         }
-        return JsonNode.Parse(buffer) as JsonObject;
-    }
-
-    private async Task<string?> ReadHeaderLineAsync(CancellationToken ct)
-    {
-        var bytes = new List<byte>(64);
-        var one = new byte[1];
-        while (true)
+        try
         {
-            var n = await _input.ReadAsync(one, ct).ConfigureAwait(false);
-            if (n == 0) return bytes.Count == 0 ? null : Encoding.ASCII.GetString(bytes.ToArray());
-            if (one[0] == '\n')
-            {
-                if (bytes.Count > 0 && bytes[^1] == '\r') bytes.RemoveAt(bytes.Count - 1);
-                return Encoding.ASCII.GetString(bytes.ToArray());
-            }
-            bytes.Add(one[0]);
+            return JsonNode.Parse(buffer) as JsonObject ?? [];
+        }
+        catch (JsonException ex)
+        {
+            // One malformed message must not end the session: skip it (an object without "method" is ignored).
+            Log.Error("Ignoring a malformed message", ex);
+            return [];
         }
     }
 
+    private readonly byte[] _one = new byte[1];
+    private readonly List<byte> _line = new(64);
+
+    /// <summary>One header line (ASCII, CRLF stripped); null at end of stream. Reads are buffered, so byte-by-byte is cheap.</summary>
+    private async Task<string?> ReadHeaderLineAsync(CancellationToken ct)
+    {
+        _line.Clear();
+        while (true)
+        {
+            var n = await _input.ReadAsync(_one, ct).ConfigureAwait(false);
+            if (n == 0) return _line.Count == 0 ? null : Encoding.ASCII.GetString(CollectionsMarshal.AsSpan(_line));
+            if (_one[0] == '\n')
+            {
+                var span = CollectionsMarshal.AsSpan(_line);
+                if (span.Length > 0 && span[^1] == '\r') span = span[..^1];
+                return Encoding.ASCII.GetString(span);
+            }
+            _line.Add(_one[0]);
+        }
+    }
+
+    /// <summary>Sends one message. Header and body go out in a single write, serialized straight to UTF-8.</summary>
     public async Task SendAsync(JsonObject message)
     {
         message["jsonrpc"] = "2.0";
-        var body = Encoding.UTF8.GetBytes(message.ToJsonString(JsonOptions));
-        var header = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
+        var buffer = new ArrayBufferWriter<byte>(4096);
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            message.WriteTo(writer, JsonOptions);
+        }
+        var header = Encoding.ASCII.GetBytes($"Content-Length: {buffer.WrittenCount}\r\n\r\n");
+        var frame = new byte[header.Length + buffer.WrittenCount];
+        header.CopyTo(frame, 0);
+        buffer.WrittenSpan.CopyTo(frame.AsSpan(header.Length));
         await _writeLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            await output.WriteAsync(header).ConfigureAwait(false);
-            await output.WriteAsync(body).ConfigureAwait(false);
+            await output.WriteAsync(frame).ConfigureAwait(false);
             await output.FlushAsync().ConfigureAwait(false);
         }
         finally

@@ -1,4 +1,5 @@
 using AxamlLs.Xaml;
+using AxamlLs.Workspace;
 using Microsoft.CodeAnalysis;
 
 namespace AxamlLs.Analysis;
@@ -127,19 +128,21 @@ public static class Assets
 
         // A name is being typed: also find matching files in the folders below, so a whole path is one completion.
         if (filter.Length == 0) return;
-        var deep = new List<(int Rank, string Rel, string File)>();
-        foreach (var f in Deep(dir))
+        var deep = new List<(int Rank, int Score, string Rel, string File)>();
+        foreach (var f in Deep(dir, root))
         {
             if (!Fits(f, accepts)) continue;
             var rel = Path.GetRelativePath(dir, f).Replace('\\', '/');
             if (!rel.Contains('/')) continue; // already listed
             var fileName = Path.GetFileName(f);
+            // Tiers first (name starts with / contains the text / the path matches it fuzzily), then fzf's score.
+            if (FuzzyScore(rel, filter) is not { } score) continue;
             var rank = fileName.StartsWith(filter, StringComparison.OrdinalIgnoreCase) ? 0
-                : fileName.Contains(filter, StringComparison.OrdinalIgnoreCase) ? 1
-                : Matches(rel, filter) ? 2 : -1;
-            if (rank >= 0) deep.Add((rank, rel, f));
+                : fileName.Contains(filter, StringComparison.OrdinalIgnoreCase) ? 1 : 2;
+            deep.Add((rank, score, rel, f));
         }
-        foreach (var (rank, rel, f) in deep.OrderBy(x => x.Rank).ThenBy(x => x.Rel.Length).ThenBy(x => x.Rel, StringComparer.Ordinal).Take(MaxDeepMatches))
+        foreach (var (rank, _, rel, f) in deep.OrderBy(x => x.Rank).ThenByDescending(x => x.Score).ThenBy(x => x.Rel.Length)
+                     .ThenBy(x => x.Rel, StringComparer.Ordinal).Take(MaxDeepMatches))
             list.Add(new(prefix + rel, Features.ItemKind.File, Describe(f), null, prefix + rel, false, start, end, $"2{rank}{rel}") { PreviewPath = f });
     }
 
@@ -153,7 +156,7 @@ public static class Assets
             {
                 if (!attr.HasValue || attr.Value.Trim().Length == 0 || MarkupExtension.IsMarkup(attr.Value)) continue;
                 if (Accepts(el, targetProperty(el, attr)) == null) continue;
-                if (Resolve(analyzer, attr.Value) is not { } file || File.Exists(file) || Directory.Exists(file)) continue;
+                if (Resolve(analyzer, attr.Value) is not { } file || Exists(analyzer.ProjectDirectory, file)) continue;
                 yield return new XamlDiagnostic(attr.ValueStart, attr.ValueEnd, Severity.Warning, Codes.MissingAsset, $"File not found: {attr.Value.Trim()} ({Path.GetRelativePath(analyzer.ProjectDirectory, file)})");
             }
         }
@@ -184,25 +187,128 @@ public static class Assets
 
     private static bool Skipped(string dir) => Path.GetFileName(dir) is var n && (SkippedDirs.Contains(n) || n.StartsWith('.'));
 
-    private static IEnumerable<string> Deep(string dir)
+    /// <summary>
+    /// Every file below a folder. Inside the project this is a range of the project's sorted <see cref="FileIndex"/>
+    /// (found by binary search, no disk access), so typing in a path value does not walk the tree on each keystroke.
+    /// </summary>
+    private static IEnumerable<string> Deep(string dir, string root)
     {
+        var index = FileIndex.For(root);
+        var prefix = Path.TrimEndingDirectorySeparator(dir) + Path.DirectorySeparatorChar;
+        if (string.Equals(Path.TrimEndingDirectorySeparator(dir), index.Root, StringComparison.Ordinal) ||
+            prefix.StartsWith(index.Root + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !index.IsPruned(prefix + "x"))
+        {
+            var files = index.Files;
+            var lo = LowerBound(files, prefix);
+            for (var i = lo; i < files.Count && files[i].StartsWith(prefix, StringComparison.Ordinal); i++) yield return files[i];
+            yield break;
+        }
+
+        // Outside the project (a path relative to the file that leaves it): walk the disk.
         var pending = new Stack<string>();
         pending.Push(dir);
         while (pending.Count > 0)
         {
             var current = pending.Pop();
-            string[] files, dirs;
+            string[] found, dirs;
             try
             {
-                files = Directory.GetFiles(current);
+                found = Directory.GetFiles(current);
                 dirs = Directory.GetDirectories(current);
             }
             catch (Exception)
             {
                 continue;
             }
-            foreach (var f in files.Order(StringComparer.Ordinal)) yield return f;
+            foreach (var f in found.Order(StringComparer.Ordinal)) yield return f;
             foreach (var d in dirs.Where(d => !Skipped(d)).OrderDescending(StringComparer.Ordinal)) pending.Push(d);
+        }
+    }
+
+    private static int LowerBound(IReadOnlyList<string> sorted, string value)
+    {
+        int lo = 0, hi = sorted.Count;
+        while (lo < hi)
+        {
+            var mid = (lo + hi) >>> 1;
+            if (string.CompareOrdinal(sorted[mid], value) < 0) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    /// <summary>Whether a resolved path exists: the project's file index answers for its files, the disk for the rest.</summary>
+    private static bool Exists(string root, string path) =>
+        FileIndex.For(root).Contains(path) || File.Exists(path) || Directory.Exists(path);
+
+    /// <summary>
+    /// fzf's scoring (v1, the greedy-then-shortest-window variant): the typed letters must appear in order; each match
+    /// scores, more at the start of a word or path segment and when consecutive, and gaps cost. Null when it doesn't match.
+    /// </summary>
+    internal static int? FuzzyScore(string text, string pattern)
+    {
+        if (pattern.Length == 0) return 0;
+        static bool Eq(char a, char b) => char.ToLowerInvariant(a) == char.ToLowerInvariant(b);
+
+        // Forward: the first position where the whole pattern has been seen.
+        int p = 0, end = -1;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (!Eq(text[i], pattern[p])) continue;
+            if (++p == pattern.Length)
+            {
+                end = i;
+                break;
+            }
+        }
+        if (end < 0) return null;
+        // Backward from there: the shortest window that still holds the pattern.
+        var start = 0;
+        p = pattern.Length - 1;
+        for (var i = end; i >= 0; i--)
+        {
+            if (!Eq(text[i], pattern[p])) continue;
+            if (--p < 0)
+            {
+                start = i;
+                break;
+            }
+        }
+
+        const int Match = 16, GapStart = -3, GapExtension = -1, Consecutive = 4;
+        int score = 0, consecutive = 0;
+        var inGap = false;
+        p = 0;
+        for (var i = start; i <= end; i++)
+        {
+            if (p < pattern.Length && Eq(text[i], pattern[p]))
+            {
+                var bonus = Bonus(text, i);
+                score += Match + (p == 0 ? bonus * 2 : bonus);
+                if (consecutive > 0) score += Math.Max(bonus, Consecutive);
+                consecutive++;
+                inGap = false;
+                p++;
+            }
+            else
+            {
+                score += inGap ? GapExtension : GapStart;
+                inGap = true;
+                consecutive = 0;
+            }
+        }
+        return score;
+
+        static int Bonus(string t, int i)
+        {
+            if (i == 0) return 10;
+            var prev = t[i - 1];
+            var c = t[i];
+            if (prev is '/' or '\\') return 9;
+            if (prev is '_' or '-' or '.' or ' ') return 8;
+            if (char.IsLower(prev) && char.IsUpper(c)) return 7;
+            if (!char.IsDigit(prev) && char.IsDigit(c)) return 7;
+            return 0;
         }
     }
 
@@ -233,7 +339,28 @@ public static class Assets
     /// </summary>
     public static string? PreviewMarkdown(string file, string? root)
     {
-        if (!File.Exists(file)) return null;
+        FileInfo fi;
+        try
+        {
+            fi = new FileInfo(file);
+            if (!fi.Exists) return null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+        // The editor resolves the same item again as the selection moves up and down: keep the encoded previews.
+        var key = (file, root, fi.LastWriteTimeUtc, fi.Length);
+        if (Previews.TryGet(key, out var cached)) return cached;
+        var markdown = BuildPreview(file, root);
+        if (markdown != null) Previews.Add(key, markdown, markdown.Length);
+        return markdown;
+    }
+
+    private static readonly LruCache<(string, string?, DateTime, long), string> Previews = new(maxEntries: 128, maxWeight: 24 * 1024 * 1024);
+
+    private static string? BuildPreview(string file, string? root)
+    {
         var rel = root != null ? "/" + Path.GetRelativePath(root, file).Replace('\\', '/') : file;
         var info = $"`{rel}` · {Describe(file)}";
         if (!Mime.TryGetValue(Path.GetExtension(file), out var mime) || new FileInfo(file).Length > MaxPreviewBytes) return info;
