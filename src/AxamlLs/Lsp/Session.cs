@@ -26,9 +26,13 @@ internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgre
 }
 
 /// <summary>The user's settings from <c>initializationOptions</c> (see README "Options").</summary>
-internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints, FormattingSettings Formatting)
+/// <summary>Which lenses are shown, besides the view model and code-behind ones.</summary>
+/// <param name="ResourceReferences">"N references" on each <c>x:Key</c>.</param>
+internal sealed record CodeLensOptions(bool ResourceReferences = true);
+
+internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints, FormattingSettings Formatting, CodeLensOptions CodeLens)
 {
-    public static readonly ServerOptions Default = new(Verbose: false, InlayHintOptions.Default, FormattingSettings.Default);
+    public static readonly ServerOptions Default = new(Verbose: false, InlayHintOptions.Default, FormattingSettings.Default, new CodeLensOptions());
 
     public static ServerOptions Parse(JsonObject? initialize)
     {
@@ -36,7 +40,8 @@ internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints, 
         return new ServerOptions(
             Verbose: (bool?)options?["verbose"] ?? false,
             new InlayHintOptions(BindingSource: (bool?)options?["inlayHints"]?["bindingSource"] ?? true),
-            ParseFormatting(options?["formatting"]));
+            ParseFormatting(options?["formatting"]),
+            new CodeLensOptions(ResourceReferences: (bool?)options?["codeLens"]?["resourceReferences"] ?? true));
     }
 
     /// <summary>Missing or unreadable values keep their defaults.</summary>

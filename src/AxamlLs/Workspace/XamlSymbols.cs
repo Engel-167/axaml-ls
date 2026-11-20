@@ -34,9 +34,12 @@ public sealed record XamlSymbol(string Name, XamlSymbolKind Kind, string Path, i
 /// <summary>Reads the symbols of one file from its parse tree only (no Roslyn), so it is cheap to cache per file.</summary>
 public static class XamlSymbols
 {
-    public static XamlSymbol[] Scan(string path, string text)
+    public static XamlSymbol[] Scan(string path, string text) => Scan(path, XmlDoc.Parse(text));
+
+    /// <summary>The symbols of an already parsed file (the open document's analysis).</summary>
+    public static XamlSymbol[] Scan(string path, XmlDoc doc)
     {
-        var doc = XmlDoc.Parse(text);
+        var text = doc.Text;
         LineIndex? lines = null;
         var found = new List<XamlSymbol>();
         void Add(string name, XamlSymbolKind kind, XmlAttr attr, string? container)

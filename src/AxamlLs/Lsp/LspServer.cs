@@ -58,7 +58,8 @@ public sealed class LspServer : IDisposable
             new CompletionHandler(documents),
             new CompletionResolveHandler(),
             new CodeActionHandler(documents),
-            new ContentModifiedGuard(new CodeLensHandler(documents), documents),
+            new ContentModifiedGuard(new CodeLensHandler(documents, _session), documents),
+            new CodeLensResolveHandler(documents, targets),
             new ExecuteCommandHandler(_client),
             new DocumentSymbolHandler(documents),
             new FoldingRangeHandler(documents),
@@ -169,6 +170,9 @@ public sealed class LspServer : IDisposable
             result = null;
             error = ErrorCodes.Error(ErrorCodes.RequestCancelled, "Request cancelled");
         }
+        // A handler may answer with part of its parameters, which still belong to the request message: a node can have
+        // only one parent, and adding it to the response would throw after the try above, leaving the request unanswered.
+        if (result?.Parent != null) result = result.DeepClone();
         _metrics.RequestSince(metricMethod, started);
         if ((int?)error?["code"] == ErrorCodes.RequestCancelled) _metrics.RequestCancelled(metricMethod);
         await _client.RespondAsync(id, result, error).ConfigureAwait(false);

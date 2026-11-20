@@ -396,6 +396,16 @@ analyse with no *new* diagnostics. That is a shared helper assertion in `TargetT
 **Tests** (`CodeLensTests.cs`): counts for keys used in 0, 1 and several files (`samples/SampleApp`), and resolve
 leaves the range unchanged.
 
+**Status: done.**
+- The lens holds the key's position. `codeLens/resolve` reuses `TargetLookup` and `Targets.OccurrencesAsync`, so the
+  count is exactly what find-references returns.
+- `Analysis/ResourceLenses.cs` holds the title and jump rules.
+- If the document changed so the position no longer names a key, the lens gets an empty title rather than a wrong count.
+- Found on the way: a handler that answered with part of its parameters left the request unanswered (the JSON node
+  already had a parent). `LspServer` now copies such a result.
+- Tests: `CodeLensTests` (four uses across two files on the sample, zero and one use, resolve through the server
+  keeping the range). The bench shows no regression.
+
 ---
 
 ## Order of work
