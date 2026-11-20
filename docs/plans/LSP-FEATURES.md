@@ -275,6 +275,15 @@ a property element, and a comment.
 extension from `samples/SampleApp/Localization`, and nested `{Binding Converter={StaticResource |}}`, which answers
 for the inner extension.
 
+**Status: done.**
+- `Analysis/MarkupSignatures.cs`: the built-ins are described in a table, since their Avalonia types are compiler
+  intrinsics and not all resolvable. Custom extensions are read from Roslyn, the way completion reads them.
+- `Lsp/Handlers/SignatureHelpHandler.cs` sends parameter labels as offsets, because `Path` appears both positionally
+  and as a name.
+- A constructor parameter takes its doc from the property of the same name (primary constructors).
+- Signature help is not offered on the extension name, which is completion's job.
+- Tests: `SignatureHelpTests` (the five cases above plus unclosed markup while typing) and a request test.
+
 ---
 
 ## F7. Clickable paths

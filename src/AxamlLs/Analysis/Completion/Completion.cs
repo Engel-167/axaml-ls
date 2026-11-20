@@ -8,7 +8,7 @@ namespace AxamlLs.Analysis;
 /// </summary>
 public static partial class Completion
 {
-    private static readonly string[] BindingKeys =
+    internal static readonly string[] BindingKeys =
         ["Path", "Mode", "Converter", "ConverterParameter", "ConverterCulture", "StringFormat", "FallbackValue", "TargetNullValue", "ElementName", "RelativeSource", "Source", "DataType", "Priority", "UpdateSourceTrigger", "Delay"];
 
     internal static readonly string[] MarkupExtensions =
