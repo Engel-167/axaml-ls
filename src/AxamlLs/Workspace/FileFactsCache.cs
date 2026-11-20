@@ -50,6 +50,15 @@ internal sealed class FileFactsCache<T>(Func<string, string, T> scan, Func<T, T,
         return [.. result];
     }
 
+    /// <summary>The facts of one file (an open buffer wins over the disk); null when it does not exist.</summary>
+    public T? Get(FileIndex index, string path, IReadOnlyDictionary<string, string> openBuffers)
+    {
+        var scanned = 0;
+        var facts = Get(path, openBuffers, index.Generation, ref scanned);
+        if (scanned > 0) metrics?.FilesScanned(scanned);
+        return facts;
+    }
+
     /// <summary>Whether two collections hold the same fact objects in the same order (no deep comparison).</summary>
     public static bool SameObjects(T[] a, T[] b)
     {

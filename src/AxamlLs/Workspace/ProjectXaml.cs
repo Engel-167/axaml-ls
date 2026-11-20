@@ -20,7 +20,9 @@ public sealed class ProjectXaml
 
     /// <param name="host">The project whose .axaml files are listed.</param>
     /// <param name="openBuffers">Unsaved editor contents by path; they win over the disk.</param>
-    public IReadOnlyList<XamlFile> Files(ProjectHost host, IReadOnlyDictionary<string, string> openBuffers)
+    /// <param name="mentioning">When given, only files whose words may include one of these names are analysed and
+    /// returned (see <see cref="ProjectIndexes.MayMention"/>); the others are not even read when their words are cached.</param>
+    public IReadOnlyList<XamlFile> Files(ProjectHost host, IReadOnlyDictionary<string, string> openBuffers, IReadOnlyCollection<string>? mentioning = null)
     {
         var project = host.Current;
         var index = host.Indexes.Files;
@@ -34,6 +36,7 @@ public sealed class ProjectXaml
         var result = new List<XamlFile>();
         foreach (var path in paths.Order(StringComparer.Ordinal))
         {
+            if (mentioning != null && !host.Indexes.MayMention(path, openBuffers, mentioning)) continue;
             try
             {
                 if (File(path, project, host, openBuffers, generation) is { } file) result.Add(file);

@@ -327,6 +327,36 @@ Do the same, in AXAML terms (Domain-based D1).
 
 **Done when:** bench `references` and `rename` meet the targets above.
 
+**Status: done.**
+- `Workspace/NameIndex.cs`:
+  - `FileWords`, a per-file word set cached by `ProjectIndexes` (`MayMention`).
+  - `CodeLiteralFacts`, the C# class and key literals cached per `.cs` file (`ProjectIndexes.CodeLiterals`). It is
+    reached through `ProjectContext.CodeLiterals`.
+- `ProjectXaml.Files(…, mentioning)` analyses only candidate files. `Targets.CandidateNames` gives the names, and
+  `TargetLookup` passes them for references and rename.
+- `Targets.CodeFiles` is deleted. `AddLocation` checks and reads each file once per request.
+- Differences from the sketch above:
+  - Words are runs of letters (any script), digits, `_`, `.` and `-`, plus their parts at `.` and `-`.
+  - A name that is not a single word is never filtered.
+  - A file containing a character reference (`&#`) may mention anything.
+  - Symbol candidates are the name written under the cursor, the symbol's name, and the name without `Extension`,
+    `Property`, `Event` or a `Get`/`Set` prefix.
+- Tests (`NameIndexTests`):
+  - word extraction;
+  - filter results;
+  - the differential test: every target at every word start in `samples/SampleApp` finds the same occurrences with
+    and without the filter. It exercises element names, keys, classes and symbols.
+- Bench against `main`:
+
+  | Scenario | Median now | Median `main` |
+  |---|---|---|
+  | references | 14.2 ms | 27.3 ms |
+  | rename | 14.1 ms | 25.5 ms |
+  | cancel | 11.1 ms | 21.1 ms |
+
+  The bench key is used in all 500 views, so this gain comes from the cached C# literals, not from the filter. The
+  warm target (≤ 30 ms) is met.
+
 ---
 
 ## P4. Cache the library part of `TypesByName`

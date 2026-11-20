@@ -142,8 +142,11 @@ internal sealed class Documents(WorkspaceManager workspace, ProjectLoadProgress 
     }
 
     /// <summary>Every .axaml file of a project, analyzed, with open buffers winning over the disk.</summary>
-    public IReadOnlyList<XamlFile> ProjectFiles(ProjectHost host, IReadOnlyDictionary<string, string>? buffers = null) =>
-        _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, buffers ?? OpenBuffers());
+    /// <param name="host">The project.</param>
+    /// <param name="buffers">Open buffers, when the caller already took them.</param>
+    /// <param name="mentioning">Only the files that may mention one of these names (see <see cref="ProjectXaml.Files"/>).</param>
+    public IReadOnlyList<XamlFile> ProjectFiles(ProjectHost host, IReadOnlyDictionary<string, string>? buffers = null, IReadOnlyCollection<string>? mentioning = null) =>
+        _projectXaml.GetOrAdd(host, _ => new ProjectXaml()).Files(host, buffers ?? OpenBuffers(), mentioning);
 
     /// <summary>
     /// Text of a file as edits and locations must see it: the open buffer if there is one, else the disk.

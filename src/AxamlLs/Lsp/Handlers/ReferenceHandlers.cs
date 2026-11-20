@@ -23,7 +23,8 @@ internal sealed class TargetLookup(Documents documents, ProjectLoadProgress prog
         var offset = Protocol.Offset(analysis.Lines, p["position"]!);
         if (Targets.Find(analysis.Analyzer, offset) is not { } found) return null;
         var origin = new XamlFile(doc.Path, analysis.Analyzer.Result.Doc.Text, analysis.Analyzer, analysis.Lines);
-        IReadOnlyList<XamlFile> files = host?.Current != null ? documents.ProjectFiles(host) : [origin];
+        // Only files that can mention the target are analysed (an element name needs none: it stays in its file).
+        IReadOnlyList<XamlFile> files = host?.Current != null ? documents.ProjectFiles(host, mentioning: Targets.CandidateNames(found, origin.Text)) : [origin];
         return new TargetContext(doc, origin, files, host, found);
     }
 }

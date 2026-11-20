@@ -20,6 +20,8 @@ public sealed class ProjectIndexes : IDisposable
 
     private readonly FileFactsCache<List<ResourceEntry>> _resourceFacts;
     private readonly FileFactsCache<ClassIndex.FileFacts> _styleFacts;
+    private readonly FileFactsCache<FileWords> _words;
+    private readonly FileFactsCache<CodeLiteralFacts> _codeLiterals;
     private readonly ServerMetrics? _metrics;
     private Merged<List<ResourceEntry>, List<ResourceEntry>>? _resources;
     private Merged<ClassIndex.FileFacts, ProjectStyles>? _styles;
@@ -43,6 +45,8 @@ public sealed class ProjectIndexes : IDisposable
         _metrics = metrics;
         _resourceFacts = new(ResourceIndex.Scan, ResourceIndex.SameEntries, metrics);
         _styleFacts = new(ClassIndex.ScanFile, (a, b) => a.SameAs(b), metrics);
+        _words = new((_, text) => FileWords.Scan(text), (a, b) => a.SameAs(b), metrics);
+        _codeLiterals = new(CodeLiteralFacts.Scan, (a, b) => a.SameAs(b), metrics);
     }
 
     public string Root => Files.Root;
@@ -80,6 +84,17 @@ public sealed class ProjectIndexes : IDisposable
         return merged;
     }
 
+    /// <summary>
+    /// Whether the file at <paramref name="path"/> may mention one of <paramref name="names"/>: false only when its
+    /// words (cached per file) prove it cannot, so the caller can skip analysing it.
+    /// </summary>
+    public bool MayMention(string path, IReadOnlyDictionary<string, string> openBuffers, IReadOnlyCollection<string> names) =>
+        _words.Get(Files, path, openBuffers)?.MayMention(names) ?? true;
+
+    /// <summary>The style classes and resource keys named by string literals in the folder's .cs files (cached per file).</summary>
+    public IReadOnlyList<CodeLiteralFacts> CodeLiterals(IReadOnlyDictionary<string, string> openBuffers) =>
+        _codeLiterals.Collect(Files, Files.WithExtensions(".cs"), openBuffers, ".cs");
+
     private static string Normalize(string root) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
 
     public void Dispose() => Files.Dispose();
@@ -95,13 +110,15 @@ public sealed class ProjectIndexes : IDisposable
 /// <param name="Styles">The project's style classes and template parts.</param>
 /// <param name="Files">Every analyzed .axaml file of the project.</param>
 /// <param name="FileIndex">The folder's file list, for asset completion and existence checks.</param>
+/// <param name="CodeLiterals">Style classes and resource keys named in the project's C# string literals.</param>
 public sealed record ProjectContext(
     string? ProjectDirectory,
     string? DocumentPath,
     Func<IReadOnlyList<ResourceEntry>>? Resources = null,
     Func<ProjectStyles>? Styles = null,
     Func<IReadOnlyList<XamlFile>>? Files = null,
-    FileIndex? FileIndex = null)
+    FileIndex? FileIndex = null,
+    Func<IReadOnlyList<CodeLiteralFacts>>? CodeLiterals = null)
 {
     public static readonly ProjectContext None = new(null, null);
 
@@ -116,5 +133,6 @@ public sealed record ProjectContext(
     /// <param name="files">Every analyzed .axaml file of the project, when the caller has them.</param>
     public static ProjectContext For(string path, ProjectHost? host, ProjectIndexes indexes,
         Func<IReadOnlyDictionary<string, string>> openBuffers, Func<IReadOnlyList<XamlFile>>? files = null) =>
-        new(host?.ProjectDirectory, path, () => indexes.Resources(openBuffers()), () => indexes.Styles(openBuffers()), files, indexes.Files);
+        new(host?.ProjectDirectory, path, () => indexes.Resources(openBuffers()), () => indexes.Styles(openBuffers()), files, indexes.Files,
+            host == null ? null : () => indexes.CodeLiterals(openBuffers()));
 }
