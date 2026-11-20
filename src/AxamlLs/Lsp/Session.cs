@@ -4,13 +4,24 @@ using AxamlLs.Analysis;
 namespace AxamlLs.Lsp;
 
 /// <summary>What the editor said it supports in <c>initialize</c>, named in the server's terms instead of raw JSON paths.</summary>
-internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgress)
+/// <param name="ClientName">clientInfo.name, for the log.</param>
+/// <param name="WorkDoneProgress">The editor shows progress the server reports (project loading).</param>
+/// <param name="WatchedFilesRegistration">The editor accepts file watchers registered at runtime (P1).</param>
+/// <param name="RelativePatterns">Those watchers may be patterns relative to a folder (each project's).</param>
+internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgress, bool WatchedFilesRegistration = false, bool RelativePatterns = false)
 {
     public static readonly ClientCapabilities None = new("?", WorkDoneProgress: false);
 
-    public static ClientCapabilities Parse(JsonObject? initialize) => new(
-        (string?)initialize?["clientInfo"]?["name"] ?? "?",
-        WorkDoneProgress: (bool?)initialize?["capabilities"]?["window"]?["workDoneProgress"] ?? false);
+    public static ClientCapabilities Parse(JsonObject? initialize)
+    {
+        var capabilities = initialize?["capabilities"];
+        var watched = capabilities?["workspace"]?["didChangeWatchedFiles"];
+        return new(
+            (string?)initialize?["clientInfo"]?["name"] ?? "?",
+            WorkDoneProgress: (bool?)capabilities?["window"]?["workDoneProgress"] ?? false,
+            WatchedFilesRegistration: (bool?)watched?["dynamicRegistration"] ?? false,
+            RelativePatterns: (bool?)watched?["relativePatternSupport"] ?? false);
+    }
 }
 
 /// <summary>The user's settings from <c>initializationOptions</c> (see README "Options").</summary>

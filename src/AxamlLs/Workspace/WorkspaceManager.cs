@@ -8,7 +8,9 @@ namespace AxamlLs.Workspace;
 /// <see cref="ProjectIndexes"/> per folder (a project's, or the folder of an .axaml file outside any project).
 /// </summary>
 /// <param name="metrics">Passed to the indexes it creates, when given.</param>
-public sealed class WorkspaceManager(ServerMetrics? metrics = null) : IDisposable
+/// <param name="changeSources">Where a folder's file changes come from (the editor, in the server); a
+/// <see cref="FileSystemChangeSource"/> when null.</param>
+public sealed class WorkspaceManager(ServerMetrics? metrics = null, Func<string, IFileChangeSource>? changeSources = null) : IDisposable
 {
     private readonly ConcurrentDictionary<string, ProjectHost> _hosts = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<ProjectIndexes>> _indexes = new(StringComparer.Ordinal);
@@ -42,7 +44,8 @@ public sealed class WorkspaceManager(ServerMetrics? metrics = null) : IDisposabl
     {
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
         // Lazy: GetOrAdd may run the factory twice under a race, and a second instance would start a second watcher.
-        return _indexes.GetOrAdd(root, r => new Lazy<ProjectIndexes>(() => new ProjectIndexes(r, metrics))).Value;
+        return _indexes.GetOrAdd(root, r => new Lazy<ProjectIndexes>(() =>
+            new ProjectIndexes(r, changeSources?.Invoke(r) ?? new FileSystemChangeSource(r), TimeProvider.System, metrics))).Value;
     }
 
     public void Dispose()

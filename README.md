@@ -142,6 +142,7 @@ samples/SampleApp/  Avalonia 12 + CommunityToolkit fixture; Views/Broken.axaml l
 - Duplicate `x:Class` across files (AVLN2002) is not detected yet.
 - Only the first target framework of a multi-targeted project is loaded.
 - C# edits are picked up when the file is saved to disk; unsaved `.cs` buffers are not seen.
+- File changes (new views, assets, saved `.cs` files) come from the editor when it supports `workspace/didChangeWatchedFiles` registration (Zed does), so the server puts no inotify watches on the project. Otherwise it watches the project folder itself; that puts a watch on every folder, `bin/` and `obj/` included, and big repositories can hit `fs.inotify.max_user_watches` (the server then rechecks files every second). `--verbose` logs which source each project uses ("File changes for …").
 
 ## License
 

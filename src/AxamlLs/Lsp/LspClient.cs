@@ -1,14 +1,16 @@
+using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 
 namespace AxamlLs.Lsp;
 
 /// <summary>
 /// The editor, as the server talks to it: responses, notifications and the few requests the server makes
-/// (apply an edit, open a document, create a progress token). Responses to the server's requests are not awaited:
-/// the read loop drops them, so nothing here can wait on the editor.
+/// (apply an edit, open a document, create a progress token, register file watchers). Most requests are sent without
+/// waiting; <see cref="CallAsync"/> waits for the answer, which the read loop hands to <see cref="OnResponse"/>.
 /// </summary>
 internal sealed class LspClient(JsonRpc rpc)
 {
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonObject>> _calls = new(StringComparer.Ordinal);
     private int _nextRequestId;
 
     public Task RespondAsync(JsonNode id, JsonNode? result, JsonObject? error)
@@ -24,7 +26,38 @@ internal sealed class LspClient(JsonRpc rpc)
 
     /// <summary>Sends a request to the editor without waiting for its answer.</summary>
     public Task RequestAsync(string method, JsonObject parameters) =>
-        rpc.SendAsync(new JsonObject { ["id"] = $"axaml-{Interlocked.Increment(ref _nextRequestId)}", ["method"] = method, ["params"] = parameters });
+        rpc.SendAsync(new JsonObject { ["id"] = NextId(), ["method"] = method, ["params"] = parameters });
+
+    /// <summary>
+    /// Sends a request and waits for the editor's response message (with <c>result</c> or <c>error</c>). Throws
+    /// <see cref="OperationCanceledException"/> when <paramref name="ct"/> ends the wait first.
+    /// </summary>
+    /// <param name="method">The request method.</param>
+    /// <param name="parameters">Its params.</param>
+    /// <param name="ct">Ends the wait (a timeout, shutdown); the editor may still answer later, which is then dropped.</param>
+    public async Task<JsonObject> CallAsync(string method, JsonObject parameters, CancellationToken ct)
+    {
+        var id = NextId();
+        var answer = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _calls[id] = answer;
+        try
+        {
+            await rpc.SendAsync(new JsonObject { ["id"] = id, ["method"] = method, ["params"] = parameters }).ConfigureAwait(false);
+            return await answer.Task.WaitAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _calls.TryRemove(id, out _);
+        }
+    }
+
+    /// <summary>A response from the editor: completes the <see cref="CallAsync"/> waiting for it, if any.</summary>
+    public void OnResponse(JsonObject response)
+    {
+        if ((string?)response["id"] is { } id && _calls.TryRemove(id, out var answer)) answer.TrySetResult(response);
+    }
+
+    private string NextId() => $"axaml-{Interlocked.Increment(ref _nextRequestId)}";
 
     public Task PublishDiagnosticsAsync(string uri, int? version, JsonArray diagnostics)
     {

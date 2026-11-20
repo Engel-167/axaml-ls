@@ -9,7 +9,7 @@ namespace AxamlLs.Lsp;
 /// Open files change through workspace/applyEdit (undoable, left unsaved); closed ones are rewritten on disk, but only
 /// when the disk still holds the text that was analysed.
 /// </summary>
-internal sealed class CodeRenameFollower(Documents documents, LspClient client)
+internal sealed class CodeRenameFollower(Documents documents, LspClient client, EditorFileWatcher watcher)
 {
     public async Task FollowAsync(ProjectHost host, IReadOnlyList<CodeRename> renames)
     {
@@ -28,7 +28,10 @@ internal sealed class CodeRenameFollower(Documents documents, LspClient client)
                 openEdits.AddRange(group);
                 continue;
             }
-            applied += await RewriteClosedFileAsync(group.Key, byPath[group.Key].Text, [.. group]).ConfigureAwait(false);
+            var written = await RewriteClosedFileAsync(group.Key, byPath[group.Key].Text, [.. group]).ConfigureAwait(false);
+            // The editor should now report this file changed; if it never does, its file events can't be relied on.
+            if (written > 0) watcher.ExpectChange(group.Key);
+            applied += written;
         }
         if (openEdits.Count > 0)
         {

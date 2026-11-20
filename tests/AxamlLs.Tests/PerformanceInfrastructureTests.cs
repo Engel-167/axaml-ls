@@ -50,21 +50,8 @@ public class PerformanceInfrastructureTests
         Assert.True(Assets.FuzzyScore("Icons/logo.png", "lo") > Assets.FuzzyScore("Icons/hello.png", "lo"));
     }
 
-    /// <summary>Raises file changes when the test says so (no watcher, no waiting).</summary>
-    private sealed class TestFileChangeSource(bool reliable = true) : IFileChangeSource
-    {
-        public event Action<IReadOnlyList<FileChange>>? Changed;
-        public event Action? Overflowed;
-        public bool Reliable => reliable;
-        public void Raise(params FileChange[] changes) => Changed?.Invoke(changes);
-        public void Overflow() => Overflowed?.Invoke();
-        public void Dispose()
-        {
-        }
-    }
-
     /// <summary>A temp folder with Views/A.axaml, obj/Debug/B.axaml and .git/C.axaml.</summary>
-    private static string MakeFolder()
+    internal static string MakeFolder()
     {
         var root = Path.Combine(Path.GetTempPath(), "axaml-ls-index-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "Views"));

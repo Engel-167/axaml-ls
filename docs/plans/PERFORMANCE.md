@@ -205,6 +205,27 @@ workspace. LSP lets the server ask it to forward only matching changes.
 watched folder).
 Creating an `.svg` in Zed's project panel makes it show up in path completion.
 
+**Status: done.**
+- `Lsp/EditorFileWatcher.cs` and `Lsp/Handlers/WorkspaceNotifications.cs` (`initialized`,
+  `workspace/didChangeWatchedFiles`). The registration call is passed in as a function, so the tests drive it
+  without an editor.
+- Differences from the sketch above:
+  - With `relativePatternSupport`, each project folder registers its own `RelativePattern` when its indexes are
+    created (`axaml-watch-N`). Without it, there is one workspace-wide glob registration on `initialized`.
+  - While a registration is unanswered, the folder counts as unwatched, and the file index refreshes every second.
+    The registration times out after 10 s and falls back to a watcher.
+  - `LspClient.CallAsync` now waits for the editor's response. Before, the read loop dropped every response.
+  - `FileIndex`'s one-second fallback generation only ever increases. A source that becomes reliable later could
+    otherwise bring back an old generation that a cache entry still holds.
+  - Every switch (registered, refused, silent) raises `Overflowed`, so caches revalidate whatever went unseen.
+- Checked on the generated 33k-file project with an editor-like client:
+  - Registration supported: 0 inotify watches, the log says "File changes for …: from the editor", and a new
+    `.png` reported by `didChangeWatchedFiles` shows up in path completion.
+  - Registration not supported: 350 watches (one per folder), and the same completion works through the
+    fallback watcher.
+  - Bench against `main`: no regression.
+- Still to check by hand: the same in Zed with `--verbose`.
+
 ---
 
 ## P2. Parse once

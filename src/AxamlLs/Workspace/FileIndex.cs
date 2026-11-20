@@ -27,6 +27,7 @@ public sealed class FileIndex : IDisposable
     private readonly long _created;
     private readonly ConcurrentDictionary<string, string[]> _byExtension = new(StringComparer.OrdinalIgnoreCase);
     private long _generation;
+    private long _fallbackTick = -1;
     private long _structureGeneration;
     private string[] _files = [];
     private HashSet<string> _set = new(StringComparer.Ordinal);
@@ -54,13 +55,37 @@ public sealed class FileIndex : IDisposable
     }
 
     /// <summary>Changes whenever anything below the root changes. Without a reliable change source it changes every second.</summary>
-    public long Generation => Volatile.Read(ref _generation) + FallbackTick();
+    public long Generation
+    {
+        get
+        {
+            AdvanceIfUnreliable();
+            return Volatile.Read(ref _generation);
+        }
+    }
 
-    private long StructureGeneration => Volatile.Read(ref _structureGeneration) + FallbackTick();
+    private long StructureGeneration
+    {
+        get
+        {
+            AdvanceIfUnreliable();
+            return Volatile.Read(ref _structureGeneration);
+        }
+    }
 
-    /// <summary>Seconds since creation when changes can be missed, else 0.</summary>
-    private long FallbackTick() =>
-        _changes.Reliable ? 0 : (long)_time.GetElapsedTime(_created).TotalMilliseconds / FallbackTtlMs;
+    /// <summary>
+    /// While changes can be missed, both generations move on once per second. They only ever increase, so a source
+    /// that becomes reliable later (the editor's registration answered) can never bring back an old generation that a
+    /// cache entry still holds.
+    /// </summary>
+    private void AdvanceIfUnreliable()
+    {
+        if (_changes.Reliable) return;
+        var tick = (long)_time.GetElapsedTime(_created).TotalMilliseconds / FallbackTtlMs;
+        if (Interlocked.Exchange(ref _fallbackTick, tick) == tick) return;
+        Interlocked.Increment(ref _generation);
+        Interlocked.Increment(ref _structureGeneration);
+    }
 
     /// <summary>Every file below the root, outside pruned folders, sorted ordinally.</summary>
     public IReadOnlyList<string> Files => Snapshot().Files;

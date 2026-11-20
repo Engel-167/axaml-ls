@@ -37,6 +37,9 @@ internal sealed class LspTestClient : IAsyncDisposable
     /// <summary>Notifications the server sent, in order.</summary>
     public ConcurrentQueue<JsonObject> Notifications { get; } = new();
 
+    /// <summary>Requests the server sent to the editor (each answered with a null result), in order.</summary>
+    public ConcurrentQueue<JsonObject> ServerRequests { get; } = new();
+
     public async Task<JsonObject> RequestAsync(string method, JsonNode? parameters)
     {
         var id = Interlocked.Increment(ref _nextId);
@@ -49,10 +52,10 @@ internal sealed class LspTestClient : IAsyncDisposable
     public Task NotifyAsync(string method, JsonNode? parameters) =>
         SendAsync(new JsonObject { ["method"] = method, ["params"] = parameters });
 
-    /// <summary>Initializes and opens one document.</summary>
-    public async Task OpenAsync(string uri, string text)
+    /// <summary>Initializes (with the given client capabilities, none by default) and opens one document.</summary>
+    public async Task OpenAsync(string uri, string text, JsonObject? capabilities = null)
     {
-        await RequestAsync("initialize", new JsonObject { ["processId"] = null, ["capabilities"] = new JsonObject() }).ConfigureAwait(false);
+        await RequestAsync("initialize", new JsonObject { ["processId"] = null, ["capabilities"] = capabilities ?? new JsonObject() }).ConfigureAwait(false);
         await NotifyAsync("initialized", new JsonObject()).ConfigureAwait(false);
         await NotifyAsync("textDocument/didOpen", new JsonObject
         {
@@ -112,7 +115,10 @@ internal sealed class LspTestClient : IAsyncDisposable
         if (message["method"] is null && id != null && _pending.TryRemove(id, out var answer))
             answer.SetResult(message);
         else if (message["method"] is not null && message["id"] is { } requestId)
+        {
+            ServerRequests.Enqueue(message);
             await SendAsync(new JsonObject { ["id"] = requestId.DeepClone(), ["result"] = null }).ConfigureAwait(false);
+        }
         else if (message["method"] is not null)
             Notifications.Enqueue(message);
     }

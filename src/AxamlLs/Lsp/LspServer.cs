@@ -34,15 +34,16 @@ public sealed class LspServer : IDisposable
     internal LspServer(Stream input, Stream output, ServerMetrics metrics)
     {
         _metrics = metrics;
-        _workspace = new WorkspaceManager(metrics);
         _rpc = new JsonRpc(input, output);
         _client = new LspClient(_rpc);
+        var watcher = new EditorFileWatcher(_client.CallAsync, () => _session.Client);
+        _workspace = new WorkspaceManager(metrics, watcher.SourceFor);
         var progress = new ProjectLoadProgress(_client, _session);
         var documents = new Documents(_workspace, progress, metrics);
         var diagnostics = new DiagnosticsPublisher(documents, _client, metrics);
         var targets = new TargetLookup(documents, progress);
         _workspace.ProjectUpdated += diagnostics.OnProjectUpdated;
-        _workspace.CodeRenamed = new CodeRenameFollower(documents, _client).FollowAsync;
+        _workspace.CodeRenamed = new CodeRenameFollower(documents, _client, watcher).FollowAsync;
 
         IRequestHandler[] requests =
         [
@@ -72,6 +73,8 @@ public sealed class LspServer : IDisposable
             new DidOpenHandler(documents, diagnostics),
             new DidChangeHandler(documents, diagnostics),
             new DidCloseHandler(documents, diagnostics),
+            new InitializedHandler(watcher),
+            new DidChangeWatchedFilesHandler(watcher),
         ];
         _requests = requests.ToDictionary(h => h.Method, StringComparer.Ordinal);
         _notifications = notifications.ToDictionary(h => h.Method, StringComparer.Ordinal);
@@ -93,7 +96,12 @@ public sealed class LspServer : IDisposable
             if (message == null) break;
             var method = (string?)message["method"];
             var id = message["id"]?.DeepClone();
-            if (method == null) continue; // A response to one of our requests.
+            if (method == null)
+            {
+                // A response to one of our requests.
+                if (id != null) _client.OnResponse(message);
+                continue;
+            }
             var parameters = message["params"] as JsonObject;
             if (id != null) _ = Task.Run(() => HandleRequestAsync(id, method, parameters));
             else HandleNotification(method, parameters);
