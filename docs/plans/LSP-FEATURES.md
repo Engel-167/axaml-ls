@@ -169,6 +169,10 @@ That makes "formatting never changes meaning" true *by construction*, and testab
 **Tests** (`DocumentHighlightTests.cs`): one per target kind (element name, resource key, style class, binding
 member), plus tag pairs, and nothing at all on whitespace.
 
+**Status: done.** `Analysis/DocumentHighlights.cs` uses `Targets.TextOccurrences(target, file, [file])` filtered to
+the file (C# literals dropped). A class in a selector counts as a write. `DocumentHighlightTests` covers each target
+kind, tag pairs and whitespace.
+
 ---
 
 ## F3. Project-wide symbol search
