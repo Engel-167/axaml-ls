@@ -615,11 +615,11 @@ public class SetterAndAssetTests(SampleProjectFixture sample)
     [Fact]
     public void Previews_are_data_uris_with_a_visible_svg()
     {
-        var png = Assets.PreviewMarkdown(Path.Combine(SampleProjectFixture.SampleDir, "Assets", "logo.png"), SampleProjectFixture.SampleDir)!;
+        var png = AssetPreview.Markdown(Path.Combine(SampleProjectFixture.SampleDir, "Assets", "logo.png"), SampleProjectFixture.SampleDir)!;
         Assert.StartsWith("![logo.png](data:image/png;base64,iVBOR", png);
         Assert.Contains("`/Assets/logo.png`", png);
 
-        var svgMarkdown = Assets.PreviewMarkdown(Path.Combine(SampleProjectFixture.SampleDir, "Assets", "Icons", "home.svg"), null)!;
+        var svgMarkdown = AssetPreview.Markdown(Path.Combine(SampleProjectFixture.SampleDir, "Assets", "Icons", "home.svg"), null)!;
         var base64 = svgMarkdown[(svgMarkdown.IndexOf("base64,", StringComparison.Ordinal) + 7)..svgMarkdown.IndexOf(')')];
         var svg = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(base64));
         Assert.Contains("fill=\"#9a9a9a\"", svg);
@@ -627,7 +627,7 @@ public class SetterAndAssetTests(SampleProjectFixture sample)
 
         var currentColor = Path.Combine(Path.GetTempPath(), "axaml-ls-currentcolor.svg");
         File.WriteAllText(currentColor, "<svg fill=\"currentColor\" width=\"20\" height=\"20\"><path d=\"M0 0h20v20z\"/></svg>");
-        var md = Assets.PreviewMarkdown(currentColor, null)!;
+        var md = AssetPreview.Markdown(currentColor, null)!;
         var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(md[(md.IndexOf("base64,", StringComparison.Ordinal) + 7)..md.IndexOf(')')]));
         Assert.DoesNotContain("currentColor", decoded);
         Assert.Contains("viewBox=\"0 0 20 20\"", decoded);

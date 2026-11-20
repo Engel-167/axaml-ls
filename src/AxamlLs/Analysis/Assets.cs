@@ -123,7 +123,7 @@ public static class Assets
         foreach (var f in files)
         {
             var name = Path.GetFileName(f);
-            list.Add(new(prefix + name, CompletionItemKind.File, Describe(f), null, prefix + name, false, start, end, "1" + name) { PreviewPath = f });
+            list.Add(new(prefix + name, CompletionItemKind.File, AssetPreview.Describe(f), null, prefix + name, false, start, end, "1" + name) { PreviewPath = f });
         }
 
         // A name is being typed: also find matching files in the folders below, so a whole path is one completion.
@@ -143,7 +143,7 @@ public static class Assets
         }
         foreach (var (rank, _, rel, f) in deep.OrderBy(x => x.Rank).ThenByDescending(x => x.Score).ThenBy(x => x.Rel.Length)
                      .ThenBy(x => x.Rel, StringComparer.Ordinal).Take(MaxDeepMatches))
-            list.Add(new(prefix + rel, CompletionItemKind.File, Describe(f), null, prefix + rel, false, start, end, $"2{rank}{rel}") { PreviewPath = f });
+            list.Add(new(prefix + rel, CompletionItemKind.File, AssetPreview.Describe(f), null, prefix + rel, false, start, end, $"2{rank}{rel}") { PreviewPath = f });
     }
 
     /// <summary>Warnings for path values that point to a file in this project that does not exist.</summary>
@@ -309,93 +309,6 @@ public static class Assets
             if (!char.IsDigit(prev) && char.IsDigit(c)) return 7;
             return 0;
         }
-    }
-
-    private static string Describe(string file)
-    {
-        try
-        {
-            var size = new FileInfo(file).Length;
-            return size < 1024 ? $"{size} B" : size < 1024 * 1024 ? $"{size / 1024.0:0.#} KB" : $"{size / 1024.0 / 1024.0:0.#} MB";
-        }
-        catch (Exception)
-        {
-            return "file";
-        }
-    }
-
-    private static readonly Dictionary<string, string> Mime = new(StringComparer.OrdinalIgnoreCase)
-    {
-        [".png"] = "image/png", [".jpg"] = "image/jpeg", [".jpeg"] = "image/jpeg", [".gif"] = "image/gif",
-        [".webp"] = "image/webp", [".bmp"] = "image/bmp", [".ico"] = "image/ico", [".svg"] = "image/svg+xml",
-    };
-    private const long MaxPreviewBytes = 2 * 1024 * 1024;
-
-    /// <summary>
-    /// Markdown for the documentation panel: the image embedded as a data: URI (Zed renders those, not file:// links),
-    /// then the path and size. SVG icons that leave their color unset would draw black on a dark theme, so the
-    /// preview gets a neutral fill and a readable size.
-    /// </summary>
-    public static string? PreviewMarkdown(string file, string? root)
-    {
-        FileInfo fi;
-        try
-        {
-            fi = new FileInfo(file);
-            if (!fi.Exists) return null;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-        // The editor resolves the same item again as the selection moves up and down: keep the encoded previews.
-        var key = (file, root, fi.LastWriteTimeUtc, fi.Length);
-        if (Previews.TryGet(key, out var cached)) return cached;
-        var markdown = BuildPreview(file, root);
-        if (markdown != null) Previews.Add(key, markdown, markdown.Length);
-        return markdown;
-    }
-
-    private static readonly LruCache<(string, string?, DateTime, long), string> Previews = new(maxEntries: 128, maxWeight: 24 * 1024 * 1024);
-
-    private static string? BuildPreview(string file, string? root)
-    {
-        var rel = root != null ? "/" + Path.GetRelativePath(root, file).Replace('\\', '/') : file;
-        var info = $"`{rel}` · {Describe(file)}";
-        if (!Mime.TryGetValue(Path.GetExtension(file), out var mime) || new FileInfo(file).Length > MaxPreviewBytes) return info;
-        try
-        {
-            byte[] bytes;
-            if (mime == "image/svg+xml") bytes = System.Text.Encoding.UTF8.GetBytes(PreviewSvg(File.ReadAllText(file)));
-            else bytes = File.ReadAllBytes(file);
-            return $"![{Path.GetFileName(file)}](data:{mime};base64,{Convert.ToBase64String(bytes)})\n\n{info}";
-        }
-        catch (Exception)
-        {
-            return info;
-        }
-    }
-
-    private static string PreviewSvg(string svg)
-    {
-        var open = svg.IndexOf("<svg", StringComparison.Ordinal);
-        if (open < 0) return svg;
-        var close = svg.IndexOf('>', open);
-        if (close < 0) return svg;
-        var tag = svg[open..close];
-        string? Attr(string name)
-        {
-            var m = System.Text.RegularExpressions.Regex.Match(tag, $@"\s{name}\s*=\s*[""']([^""']*)[""']");
-            return m.Success ? m.Groups[1].Value : null;
-        }
-        var newTag = tag;
-        if (Attr("viewBox") == null && double.TryParse(Attr("width")?.TrimEnd('p', 'x'), out var w) && double.TryParse(Attr("height")?.TrimEnd('p', 'x'), out var h))
-            newTag += $" viewBox=\"0 0 {w} {h}\"";
-        newTag = System.Text.RegularExpressions.Regex.Replace(newTag, @"\s(width|height)\s*=\s*[""'][^""']*[""']", "");
-        newTag += " width=\"96\" height=\"96\"";
-        if (Attr("fill") == null) newTag += " fill=\"#9a9a9a\"";
-        // currentColor has no surrounding text color in a preview and renders black.
-        return (svg[..open] + newTag + svg[close..]).Replace("currentColor", "#9a9a9a", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The project file a path value under the cursor points to (Svg Path, Image Source …).</summary>

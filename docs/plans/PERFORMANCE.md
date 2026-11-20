@@ -493,6 +493,22 @@ of it.
 - An image over the cap gives markdown with no `data:` URI but with dimensions.
 - SVG minification keeps every `<path d=…>` byte-identical.
 
+**Status: P6.1 done; P6.2 waits for a decision on the package.**
+- `Analysis/ImageInfo.cs` reads the pixel size from the header of PNG, JPEG, GIF, BMP (both header kinds), ICO
+  (largest entry) and WebP (`VP8`, `VP8L`, `VP8X`). JPEG walks its segments by length to the first frame marker.
+- `Analysis/AssetPreview.cs` holds the preview code, moved out of `Assets.cs` (now ~330 lines, off the U1 list):
+  - every image gets an info line like `` `/Assets/logo.png` · 512×512 · 1.4 MB ``;
+  - an image is embedded only up to 256 KB of source bytes;
+  - SVGs are minified first (comments, `<metadata>`, Inkscape/Sodipodi elements and attributes, whitespace between
+    tags), then capped.
+- Tests (`AssetPreviewTests`):
+  - header parsing for each format, from bytes built in the test, so no binary fixtures;
+  - truncated or unknown files give no size;
+  - an over-cap image gives the info line without a `data:` URI;
+  - minification keeps each `<path d=…>` byte-identical.
+- Effect: images between 256 KB and 2 MB are no longer sent as up to 2.7 MB of base64 per resolve. Bench against
+  `main`: no regression.
+
 ---
 
 ## Order of work and dependencies

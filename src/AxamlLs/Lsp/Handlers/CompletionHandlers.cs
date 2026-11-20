@@ -61,7 +61,7 @@ internal sealed class CompletionResolveHandler : SyncRequestHandler
     protected override JsonNode? Handle(JsonObject item)
     {
         var result = (JsonObject)item.DeepClone();
-        if ((string?)item["data"]?["preview"] is { } path && Assets.PreviewMarkdown(path, (string?)item["data"]?["root"]) is { } markdown)
+        if ((string?)item["data"]?["preview"] is { } path && AssetPreview.Markdown(path, (string?)item["data"]?["root"]) is { } markdown)
             result["documentation"] = new JsonObject { ["kind"] = "markdown", ["value"] = markdown };
         return result;
     }
