@@ -75,7 +75,7 @@ public static class Assets
         return Path.GetFullPath(Uri.UnescapeDataString(full));
     }
 
-    public static void Complete(XamlAnalyzer analyzer, MappedText value, int offset, string[] accepts, List<Features.Completion> list)
+    public static void Complete(XamlAnalyzer analyzer, MappedText value, int offset, string[] accepts, List<CompletionItem> list)
     {
         if (analyzer.ProjectDirectory is not { } root) return;
         var idx = value.IndexOf(offset);
@@ -85,7 +85,7 @@ public static class Assets
         // Typing the scheme: offer this project's avares:// root.
         if (typed.Length > 0 && "avares://".StartsWith(typed, StringComparison.OrdinalIgnoreCase) || typed.Equals("avares://", StringComparison.OrdinalIgnoreCase))
         {
-            list.Add(new($"avares://{assembly}/", Features.ItemKind.Folder, "this project's resources", null, $"avares://{assembly}", false,
+            list.Add(new($"avares://{assembly}/", CompletionItemKind.Folder, "this project's resources", null, $"avares://{assembly}", false,
                 value.Abs(0), value.Abs(SegmentEnd(value.Text, idx))));
             return;
         }
@@ -118,12 +118,12 @@ public static class Assets
         foreach (var d in subdirs)
         {
             var name = Path.GetFileName(d);
-            list.Add(new(prefix + name + "/", Features.ItemKind.Folder, "folder — type / to open", null, prefix + name, false, start, end, "0" + name));
+            list.Add(new(prefix + name + "/", CompletionItemKind.Folder, "folder — type / to open", null, prefix + name, false, start, end, "0" + name));
         }
         foreach (var f in files)
         {
             var name = Path.GetFileName(f);
-            list.Add(new(prefix + name, Features.ItemKind.File, Describe(f), null, prefix + name, false, start, end, "1" + name) { PreviewPath = f });
+            list.Add(new(prefix + name, CompletionItemKind.File, Describe(f), null, prefix + name, false, start, end, "1" + name) { PreviewPath = f });
         }
 
         // A name is being typed: also find matching files in the folders below, so a whole path is one completion.
@@ -143,7 +143,7 @@ public static class Assets
         }
         foreach (var (rank, _, rel, f) in deep.OrderBy(x => x.Rank).ThenByDescending(x => x.Score).ThenBy(x => x.Rel.Length)
                      .ThenBy(x => x.Rel, StringComparer.Ordinal).Take(MaxDeepMatches))
-            list.Add(new(prefix + rel, Features.ItemKind.File, Describe(f), null, prefix + rel, false, start, end, $"2{rank}{rel}") { PreviewPath = f });
+            list.Add(new(prefix + rel, CompletionItemKind.File, Describe(f), null, prefix + rel, false, start, end, $"2{rank}{rel}") { PreviewPath = f });
     }
 
     /// <summary>Warnings for path values that point to a file in this project that does not exist.</summary>
@@ -398,4 +398,17 @@ public static class Assets
         // currentColor has no surrounding text color in a preview and renders black.
         return (svg[..open] + newTag + svg[close..]).Replace("currentColor", "#9a9a9a", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>The project file a path value under the cursor points to (Svg Path, Image Source …).</summary>
+    public static string? At(XamlAnalyzer analyzer, int offset)
+    {
+        var el = analyzer.Result.Doc.ElementAt(offset);
+        var attr = el?.Attributes.FirstOrDefault(a => a.HasValue && a.ValueStart <= offset && offset <= a.ValueEnd);
+        if (el == null || attr == null || MarkupExtension.IsMarkup(attr.Value) || Assets.Accepts(el, PropertyLookup.TargetProperty(analyzer, el, attr)) == null) return null;
+        return Assets.Resolve(analyzer, attr.Value) is { } file && File.Exists(file) ? file : null;
+    }
+
+    /// <summary>Paths that point to files that do not exist (AXN diagnostics).</summary>
+    public static IEnumerable<XamlDiagnostic> Diagnostics(XamlAnalyzer analyzer) =>
+        Assets.Missing(analyzer, (el, attr) => attr.Prefix == null || attr.Name.Contains('.') ? PropertyLookup.TargetProperty(analyzer, el, attr) : null);
 }

@@ -20,7 +20,7 @@ public class HoverTests(SampleProjectFixture sample)
         var xaml = new ProjectXaml();
         var empty = new Dictionary<string, string>();
         ProjectXaml.Wire(analyzer, Path.Combine(SampleProjectFixture.SampleDir, "Views", "Scratch.axaml"), sample.Host, () => empty, () => xaml.Files(sample.Host, empty));
-        return Features.Hover(analyzer, offset)?.Markdown;
+        return Hover.At(analyzer, offset)?.Markdown;
     }
 
     [Fact]

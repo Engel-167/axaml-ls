@@ -22,7 +22,7 @@ internal sealed class CompletionHandler(Documents documents) : SyncRequestHandle
         if (!documents.TryAnalyzeAt(p, out _, out var analysis, out var offset)) return null;
         var items = new JsonArray();
         var incomplete = false;
-        foreach (var c in Features.Complete(analysis.Analyzer, offset))
+        foreach (var c in Completion.At(analysis.Analyzer, offset))
         {
             var item = new JsonObject
             {
@@ -45,7 +45,7 @@ internal sealed class CompletionHandler(Documents documents) : SyncRequestHandle
             if (c.IsSnippet) item["insertTextFormat"] = SnippetFormat;
             if (c.SortText != null) item["sortText"] = c.SortText;
             if (c.PreviewPath != null) item["data"] = new JsonObject { ["preview"] = c.PreviewPath, ["root"] = analysis.Analyzer.ProjectDirectory };
-            if (c.Kind is Features.ItemKind.File or Features.ItemKind.Folder) incomplete = true;
+            if (c.Kind is CompletionItemKind.File or CompletionItemKind.Folder) incomplete = true;
             items.Add(item);
         }
         // File lists depend on the typed name (deep matches), so the editor asks again as it changes.

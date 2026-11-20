@@ -258,4 +258,8 @@ public static class InlayHints
         }
         return parts;
     }
+
+    /// <summary>Hints for the requested range, with the attribute → property lookup the analyzer uses.</summary>
+    public static List<InlayHint> InRange(XamlAnalyzer analyzer, int start, int end, InlayHintOptions? options = null) =>
+        Compute(analyzer, start, end, (el, attr) => attr.Name.StartsWith("xmlns", StringComparison.Ordinal) ? null : PropertyLookup.TargetProperty(analyzer, el, attr), options);
 }

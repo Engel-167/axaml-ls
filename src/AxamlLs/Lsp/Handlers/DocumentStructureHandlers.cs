@@ -93,7 +93,7 @@ internal sealed class OnTypeFormattingHandler(Documents documents) : SyncRequest
         if ((string?)p["ch"] != "/" || !documents.TryGet(Protocol.DocumentUri(p), out var doc)) return null;
         var (text, lines, _) = Documents.CurrentText(doc);
         var offset = Protocol.Offset(lines, p["position"]!);
-        if (Features.SelfClosingEdit(text, offset) is not { } e) return null;
+        if (SelfClosingTag.Edit(text, offset) is not { } e) return null;
         return new JsonArray(new JsonObject { ["range"] = Protocol.Range(lines, e.Start, e.End), ["newText"] = "" });
     }
 }

@@ -68,6 +68,20 @@ public sealed class XmlElement
         return prefix.Length == 0 ? "" : null;
     }
 
+    /// <summary>The xmlns prefixes in scope here, nearest declaration first (an inner prefix hides an outer one).</summary>
+    public IEnumerable<(string Prefix, string Ns)> DeclaredNamespaces()
+    {
+        var seen = new HashSet<string>();
+        foreach (var e in SelfAndAncestors())
+        {
+            if (e.NamespaceDeclarations == null) continue;
+            foreach (var (prefix, ns) in e.NamespaceDeclarations)
+            {
+                if (seen.Add(prefix)) yield return (prefix, ns);
+            }
+        }
+    }
+
     public IEnumerable<XmlElement> SelfAndAncestors()
     {
         for (var e = this; e != null; e = e.Parent) yield return e;

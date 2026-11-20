@@ -54,8 +54,8 @@ public static class QuickFixes
         void AddAll(ITypeSymbol? type)
         {
             if (type == null) return;
-            names.UnionWith(Features.SettableProperties(type).Select(p => p.Name));
-            names.UnionWith(Features.AvaloniaProperties(type).Select(p => p.Name));
+            names.UnionWith(PropertyLookup.SettableProperties(type).Select(p => p.Name));
+            names.UnionWith(PropertyLookup.AvaloniaProperties(type).Select(p => p.Name));
             names.UnionWith(Members.SelfAndBases(type).SelectMany(t => t.GetMembers()).OfType<IEventSymbol>()
                 .Where(e => e.DeclaredAccessibility == Accessibility.Public && !e.IsStatic).Select(e => e.Name));
         }
@@ -100,8 +100,8 @@ public static class QuickFixes
     public static IEnumerable<QuickFix> UnknownMarkupExtension(XamlAnalyzer a, XamlDiagnostic d)
     {
         var el = a.Result.Doc.ElementAt(d.Start);
-        var names = Features.MarkupExtensions.AsEnumerable();
-        if (el != null) names = names.Concat(Features.CustomMarkupExtensions(a, el).Select(x => x.Label));
+        var names = Completion.MarkupExtensions.AsEnumerable();
+        if (el != null) names = names.Concat(Completion.CustomMarkupExtensions(a, el).Select(x => x.Label));
         return ChangeTo(a, d, names);
     }
 
@@ -123,14 +123,14 @@ public static class QuickFixes
             if (clr.Length == 0) continue;
             var edits = new List<FileEdit>();
             string title;
-            var existing = Features.DeclaredNamespaces(root).FirstOrDefault(n => n.Prefix.Length > 0 && p.ClrNamespacesFor(n.Ns).Contains(clr));
+            var existing = root.DeclaredNamespaces().FirstOrDefault(n => n.Prefix.Length > 0 && p.ClrNamespacesFor(n.Ns).Contains(clr));
             string prefix;
             if (existing.Prefix != null)
             {
                 prefix = existing.Prefix;
                 title = $"Change to '{prefix}:{word}'";
             }
-            else if (Features.DeclaredNamespaces(root).Any(n => n.Prefix.Length == 0 && p.ClrNamespacesFor(n.Ns).Contains(clr)))
+            else if (root.DeclaredNamespaces().Any(n => n.Prefix.Length == 0 && p.ClrNamespacesFor(n.Ns).Contains(clr)))
             {
                 continue; // visible without a prefix already: the type is not what is missing
             }
@@ -159,7 +159,7 @@ public static class QuickFixes
         var last = clrNamespace[(clrNamespace.LastIndexOf('.') + 1)..].ToLowerInvariant();
         var clean = new string(last.Where(char.IsLetterOrDigit).ToArray());
         if (clean.Length == 0 || char.IsDigit(clean[0])) clean = "ns" + clean;
-        var taken = Features.DeclaredNamespaces(root).Select(n => n.Prefix).ToHashSet(StringComparer.Ordinal);
+        var taken = root.DeclaredNamespaces().Select(n => n.Prefix).ToHashSet(StringComparer.Ordinal);
         var prefix = clean;
         for (var i = 2; taken.Contains(prefix); i++) prefix = clean + i;
         return prefix;
@@ -171,7 +171,7 @@ public static class QuickFixes
     {
         if (a.Project is not { } p || a.Result.Doc.Root is not { } root) return [];
         var doc = a.Result.Doc;
-        var xPrefix = Features.DeclaredNamespaces(root).FirstOrDefault(n => n.Ns == XamlNamespaces.X).Prefix;
+        var xPrefix = root.DeclaredNamespaces().FirstOrDefault(n => n.Ns == XamlNamespaces.X).Prefix;
         if (string.IsNullOrEmpty(xPrefix)) return [];
 
         var viewName = a.Result.ClassType?.Name ?? Path.GetFileNameWithoutExtension(a.DocumentPath ?? "").Split('.')[0];
@@ -188,10 +188,10 @@ public static class QuickFixes
         {
             var clr = type.ContainingNamespace.ToDisplayString();
             var edits = new List<FileEdit>();
-            var existing = Features.DeclaredNamespaces(root).FirstOrDefault(n => n.Prefix.Length > 0 && p.ClrNamespacesFor(n.Ns).Contains(clr));
+            var existing = root.DeclaredNamespaces().FirstOrDefault(n => n.Prefix.Length > 0 && p.ClrNamespacesFor(n.Ns).Contains(clr));
             string typeText;
             if (existing.Prefix != null) typeText = $"{existing.Prefix}:{type.Name}";
-            else if (clr.Length == 0 || Features.DeclaredNamespaces(root).Any(n => n.Prefix.Length == 0 && p.ClrNamespacesFor(n.Ns).Contains(clr))) typeText = type.Name;
+            else if (clr.Length == 0 || root.DeclaredNamespaces().Any(n => n.Prefix.Length == 0 && p.ClrNamespacesFor(n.Ns).Contains(clr))) typeText = type.Name;
             else
             {
                 var prefix = NewPrefix(root, clr);

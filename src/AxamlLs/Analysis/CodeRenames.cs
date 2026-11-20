@@ -99,7 +99,7 @@ public static class CodeRenames
         foreach (var member in type.GetMembers())
         {
             if (member is not IPropertySymbol generated || !Targets.IsGenerated(generated) || SymbolEqualityComparer.Default.Equals(member, declared)) continue;
-            if (!Features.DefinitionSymbols(generated).Any(s => SymbolEqualityComparer.Default.Equals(s, declared))) continue;
+            if (!Definition.Symbols(generated).Any(s => SymbolEqualityComparer.Default.Equals(s, declared))) continue;
             if (GeneratedName(declared, declared.Name) != generated.Name) continue; // not this generator's naming: leave it
             if (GeneratedName(declared, newName) is { } renamed && renamed != generated.Name) yield return new CodeRename(generated, renamed);
         }

@@ -59,8 +59,8 @@ public static partial class Selectors
         {
             case SelectorTokenKind.Type:
                 if (ResolveType(analyzer, el, token.Text) is not { } type) return null;
-                var summary = Features.Summary(type);
-                return $"```csharp\n{Features.Describe(type)}\n```" + (summary != null ? "\n\n" + summary : "");
+                var summary = SymbolDocs.Summary(type);
+                return $"```csharp\n{SymbolDocs.Describe(type)}\n```" + (summary != null ? "\n\n" + summary : "");
 
             case SelectorTokenKind.Class when token.Text.Length > 1:
                 return ClassHover(analyzer, token.Text[1..]);

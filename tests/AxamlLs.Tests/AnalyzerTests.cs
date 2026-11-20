@@ -44,10 +44,10 @@ public class AnalyzerTests(SampleProjectFixture sample)
         var analyzer = sample.Analyze(text);
         Assert.Empty(analyzer.Result.Diagnostics);
         var offset = text.IndexOf("Title}", StringComparison.Ordinal) + 2;
-        var hover = Features.Hover(analyzer, offset);
+        var hover = Hover.At(analyzer, offset);
         Assert.NotNull(hover);
         Assert.Contains("string MainViewModel.Title", hover.Markdown);
-        var def = Assert.Single(Features.Definition(analyzer, offset));
+        var def = Assert.Single(Definition.At(analyzer, offset));
         Assert.EndsWith("MainViewModel.cs", def.FilePath);
     }
 

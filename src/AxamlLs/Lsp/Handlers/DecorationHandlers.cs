@@ -17,7 +17,7 @@ internal sealed class InlayHintHandler(Documents documents, Session session) : S
         var array = new JsonArray();
         if (!documents.TryAnalyze(p, out _, out var analysis)) return array;
         var (start, end) = Protocol.Offsets(analysis.Lines, p["range"]!);
-        foreach (var h in Features.InlayHintsIn(analysis.Analyzer, start, end, session.Options.InlayHints))
+        foreach (var h in InlayHints.InRange(analysis.Analyzer, start, end, session.Options.InlayHints))
         {
             array.Add(new JsonObject
             {

@@ -30,7 +30,7 @@ public static partial class Rename
     private static ISymbol? SourceSymbol(ISymbol symbol)
     {
         if (!Targets.IsGenerated(symbol)) return symbol;
-        return Features.DefinitionSymbols(symbol).FirstOrDefault(c => !Targets.IsGenerated(c));
+        return Definition.Symbols(symbol).FirstOrDefault(c => !Targets.IsGenerated(c));
     }
 
     public static string? Validate(Target target, string newName)

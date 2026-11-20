@@ -15,7 +15,7 @@ public static class DocumentDiagnostics
     {
         var all = new List<ReportedDiagnostic>();
         all.AddRange(analyzer.Result.Diagnostics.Select(d => new ReportedDiagnostic(d, false)));
-        all.AddRange(Features.AssetDiagnostics(analyzer).Select(d => new ReportedDiagnostic(d, false)));
+        all.AddRange(Assets.Diagnostics(analyzer).Select(d => new ReportedDiagnostic(d, false)));
         all.AddRange(ResourceCheck.Unknown(analyzer).Select(d => new ReportedDiagnostic(d, false)));
         all.AddRange(Selectors.Validate(analyzer).Select(d => new ReportedDiagnostic(d, false)));
         if (analyzer.StyleProvider?.Invoke() is ProjectStyles styles)

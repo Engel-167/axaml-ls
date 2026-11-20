@@ -83,7 +83,7 @@ public static class Targets
             }
         }
 
-        if (Features.ResourceKeyAt(analyzer, offset) is { } key && key.Key.Length > 0)
+        if (ResourceValues.KeyAt(analyzer, offset) is { } key && key.Key.Length > 0)
             return new TargetAt(new ResourceKeyTarget(key.Key), key.Start, key.Start + key.Key.Length);
 
         var r = analyzer.Result.RefAt(offset);
@@ -295,7 +295,7 @@ public static class Targets
         var solution = host.Solution!;
         // The user-written field/method behind a generated member is only searched for when the symbol itself is generated:
         // an ordinary property must not pick up an unrelated field that happens to be named like it.
-        var candidates = IsGenerated(symbol) ? Features.DefinitionSymbols(symbol) : [symbol];
+        var candidates = IsGenerated(symbol) ? Definition.Symbols(symbol) : [symbol];
         foreach (var candidate in candidates.Distinct(SymbolEqualityComparer.Default))
         {
             IEnumerable<ReferencedSymbol> found;

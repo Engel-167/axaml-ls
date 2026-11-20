@@ -13,7 +13,7 @@ internal sealed class HoverHandler(Documents documents) : SyncRequestHandler
     protected override JsonNode? Handle(JsonObject p)
     {
         if (!documents.TryAnalyzeAt(p, out _, out var analysis, out var offset)) return null;
-        if (Features.Hover(analysis.Analyzer, offset) is not { } hover) return null;
+        if (Hover.At(analysis.Analyzer, offset) is not { } hover) return null;
         return new JsonObject
         {
             ["contents"] = new JsonObject { ["kind"] = "markdown", ["value"] = hover.Markdown },

@@ -10,11 +10,11 @@ public class CompletionTests(SampleProjectFixture sample)
                      xmlns:vm="using:SampleApp.ViewModels" x:DataType="vm:MainViewModel">
         """;
 
-    private List<Features.Completion> CompleteAt(string body)
+    private List<CompletionItem> CompleteAt(string body)
     {
         var text = Header + body.Replace("|", "") + "\n</UserControl>";
         var offset = Header.Length + body.IndexOf('|');
-        return Features.Complete(sample.Analyze(text), offset);
+        return Completion.At(sample.Analyze(text), offset);
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public class ResourceAndSnippetTests(SampleProjectFixture sample)
     public void Resource_keys_come_from_the_whole_project(string body)
     {
         var (analyzer, offset) = At(body, ProjectResources);
-        var labels = Features.Complete(analyzer, offset).Select(c => c.Label).ToList();
+        var labels = Completion.At(analyzer, offset).Select(c => c.Label).ToList();
         Assert.Contains("AccentBrush", labels);
         Assert.Contains("FontSize.Body", labels);
     }
@@ -106,16 +106,16 @@ public class ResourceAndSnippetTests(SampleProjectFixture sample)
     public void Resource_keys_in_the_same_document_without_a_provider()
     {
         var (analyzer, offset) = At("<UserControl.Resources><SolidColorBrush x:Key=\"Local\" Color=\"Red\"/></UserControl.Resources><TextBlock Foreground=\"{StaticResource |}\"/>");
-        Assert.Contains(Features.Complete(analyzer, offset), c => c.Label == "Local");
+        Assert.Contains(Completion.At(analyzer, offset), c => c.Label == "Local");
     }
 
     [Fact]
     public void Resource_key_definition_and_hover()
     {
         var (analyzer, offset) = At("<TextBlock Foreground=\"{StaticResource Accent|Brush}\"/>", ProjectResources);
-        var def = Assert.Single(Features.Definition(analyzer, offset));
+        var def = Assert.Single(Definition.At(analyzer, offset));
         Assert.Equal(("/proj/GlobalStyles.axaml", 4), (def.FilePath, def.StartLine));
-        Assert.Contains("#FF6600", Features.Hover(analyzer, offset)!.Markdown);
+        Assert.Contains("#FF6600", Hover.At(analyzer, offset)!.Markdown);
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public class ResourceAndSnippetTests(SampleProjectFixture sample)
     public void New_element_gets_a_closing_tag()
     {
         var (analyzer, offset) = At("<StackPanel><Butt|\n</StackPanel>");
-        var button = Features.Complete(analyzer, offset).Single(c => c.Label == "Button");
+        var button = Completion.At(analyzer, offset).Single(c => c.Label == "Button");
         Assert.True(button.IsSnippet);
         Assert.Equal("Button $1>\n</Button>", button.InsertText);
     }
@@ -145,7 +145,7 @@ public class ResourceAndSnippetTests(SampleProjectFixture sample)
     public void Renaming_an_existing_tag_inserts_only_the_name()
     {
         var (analyzer, offset) = At("<StackPanel><Butt| Content=\"x\"/></StackPanel>");
-        var button = Features.Complete(analyzer, offset).Single(c => c.Label == "Button");
+        var button = Completion.At(analyzer, offset).Single(c => c.Label == "Button");
         Assert.False(button.IsSnippet);
         Assert.Equal("Button", button.InsertText);
     }
@@ -159,12 +159,12 @@ public class ThemeResourceTests(SampleProjectFixture sample)
                      xmlns:vm="using:SampleApp.ViewModels" x:DataType="vm:MainViewModel">
         """;
 
-    private List<Features.Completion> CompleteAt(string body)
+    private List<CompletionItem> CompleteAt(string body)
     {
         var text = Header + body.Replace("|", "") + "\n</UserControl>";
         var analyzer = sample.Analyze(text);
         analyzer.ResourceProvider = () => [new("AccentBrush", "SolidColorBrush", "/p/Styles.axaml", 1, 1, null), new("Body", "FontFamily", "/p/Styles.axaml", 2, 1, null)];
-        return Features.Complete(analyzer, Header.Length + body.IndexOf('|'));
+        return Completion.At(analyzer, Header.Length + body.IndexOf('|'));
     }
 
     [Fact]
@@ -233,13 +233,13 @@ public class ColorAndOpenerTests(SampleProjectFixture sample)
         return analyzer;
     }
 
-    private List<Features.Completion> CompleteAt(string body) => Features.Complete(Analyze(body, out var o), o);
+    private List<CompletionItem> CompleteAt(string body) => Completion.At(Analyze(body, out var o), o);
 
     [Fact]
     public void Named_colors_carry_their_value_for_a_swatch()
     {
         var red = CompleteAt("<Button Background=\"|\"/>").Single(c => c.Label == "Red");
-        Assert.Equal(Features.ItemKind.Color, red.Kind);
+        Assert.Equal(CompletionItemKind.Color, red.Kind);
         Assert.Equal("#FF0000", red.ColorHex);
         Assert.Equal("#00FFFFFF", CompleteAt("<Button Background=\"|\"/>").Single(c => c.Label == "Transparent").ColorHex);
     }
@@ -276,7 +276,7 @@ public class ColorAndOpenerTests(SampleProjectFixture sample)
     public void Color_format_templates_follow_the_names_and_replace_the_whole_value()
     {
         var items = CompleteAt("<Button Background=\"#12|\"/>");
-        var templates = items.Where(c => c.Kind == Features.ItemKind.Snippet && !c.Label.StartsWith('{')).ToList();
+        var templates = items.Where(c => c.Kind == CompletionItemKind.Snippet && !c.Label.StartsWith('{')).ToList();
         Assert.Equal(["#RRGGBB", "#AARRGGBB", "#RGB", "#ARGB", "rgb(r,g,b)", "rgba(r,g,b,a)", "hsl(h,s%,l%)", "hsla(h,s%,l%,a)", "hsv(h,s%,v%)", "hsva(h,s%,v%,a)"],
             templates.Select(c => c.Label));
         Assert.Equal("hsl(${1:0},${2:0}%,${3:0}%)", templates.Single(c => c.Label == "hsl(h,s%,l%)").InsertText);
@@ -325,7 +325,7 @@ public class ColorAndOpenerTests(SampleProjectFixture sample)
     public void Document_colors_only_where_a_color_is_meant()
     {
         var analyzer = Analyze("<StackPanel Background=\"#FF6600\"><TextBlock Text=\"Red\" Foreground=\"Red\"/><Border BorderBrush=\"#80000000\"/></StackPanel>|", out _);
-        var colors = Features.DocumentColors(analyzer).Select(c => ColorSupport.Hex(c.Argb)).ToList();
+        var colors = DocumentColors.Find(analyzer).Select(c => ColorSupport.Hex(c.Argb)).ToList();
         Assert.Equal(["#FF6600", "#FF0000", "#80000000"], colors);
     }
 
@@ -349,7 +349,7 @@ public class SelectorTests(SampleProjectFixture sample)
                      xmlns:vm="using:SampleApp.ViewModels" xmlns:loc="using:SampleApp.Localization" x:DataType="vm:MainViewModel">
         """;
 
-    private List<Features.Completion> CompleteAt(string body, params string[] usedClasses)
+    private List<CompletionItem> CompleteAt(string body, params string[] usedClasses)
     {
         var offset = Header.Length + body.IndexOf('|');
         var analyzer = sample.Analyze(Header + body.Replace("|", "") + "\n</UserControl>");
@@ -359,7 +359,7 @@ public class SelectorTests(SampleProjectFixture sample)
             styles.UsedClasses.UnionWith(usedClasses);
             return styles;
         };
-        return Features.Complete(analyzer, offset);
+        return Completion.At(analyzer, offset);
     }
 
     private static string Styled(string selector) => $"<UserControl.Styles><Style Selector=\"{selector}\"><Setter Property=\"Opacity\" Value=\"1\"/></Style></UserControl.Styles>";
@@ -513,7 +513,7 @@ public class SelectorTests(SampleProjectFixture sample)
     {
         var offset = input.IndexOf('|');
         var text = input.Replace("|", "");
-        var edit = Features.SelfClosingEdit(text, offset);
+        var edit = SelfClosingTag.Edit(text, offset);
         Assert.Equal(expected, edit is { } e ? text[..e.Start] + text[e.End..] : null);
     }
 }
@@ -534,10 +534,10 @@ public class SetterAndAssetTests(SampleProjectFixture sample)
         return analyzer;
     }
 
-    private List<Features.Completion> CompleteAt(string body)
+    private List<CompletionItem> CompleteAt(string body)
     {
         var offset = Header.Length + body.IndexOf('|');
-        return Features.Complete(Analyze(Header + body.Replace("|", "") + "\n</UserControl>"), offset);
+        return Completion.At(Analyze(Header + body.Replace("|", "") + "\n</UserControl>"), offset);
     }
 
     [Fact]
@@ -561,12 +561,12 @@ public class SetterAndAssetTests(SampleProjectFixture sample)
     {
         var root = CompleteAt("<Image Source=\"|\"/>");
         // Folders insert without the slash: typing "/" (a trigger character) reopens the menu in Zed.
-        Assert.Contains(root, c => c.Label == "/Assets/" && c.Kind == Features.ItemKind.Folder && c.InsertText == "/Assets");
+        Assert.Contains(root, c => c.Label == "/Assets/" && c.Kind == CompletionItemKind.Folder && c.InsertText == "/Assets");
         Assert.DoesNotContain(root, c => c.Label.Contains("bin") || c.Label.Contains("obj/"));
 
         var assets = CompleteAt("<Image Source=\"/Assets/|\"/>");
         Assert.Contains(assets, c => c.Label == "Icons/");
-        Assert.Contains(assets, c => c.Label == "logo.png" && c.Kind == Features.ItemKind.File);
+        Assert.Contains(assets, c => c.Label == "logo.png" && c.Kind == CompletionItemKind.File);
 
         // Images only, no svg for a plain Image; any file for a Uri.
         Assert.DoesNotContain(CompleteAt("<Image Source=\"/Assets/Icons/|\"/>"), c => c.Label.EndsWith(".svg", StringComparison.Ordinal));
@@ -597,12 +597,12 @@ public class SetterAndAssetTests(SampleProjectFixture sample)
             </StackPanel>
             </UserControl>
             """);
-        var missing = Assert.Single(Features.AssetDiagnostics(analyzer));
+        var missing = Assert.Single(Assets.Diagnostics(analyzer));
         Assert.Equal(Codes.MissingAsset, missing.Code);
         Assert.Contains("missing.png", missing.Message);
 
         var at = analyzer.Result.Doc.Text.IndexOf("/Assets/logo.png", StringComparison.Ordinal) + 3;
-        var target = Assert.Single(Features.Definition(analyzer, at));
+        var target = Assert.Single(Definition.At(analyzer, at));
         Assert.EndsWith("Assets/logo.png", target.FilePath);
     }
 
@@ -651,7 +651,7 @@ public class InlayHintTests(SampleProjectFixture sample)
     {
         var text = Header + body + "\n</UserControl>";
         var analyzer = sample.Analyze(text);
-        var hints = Features.InlayHintsIn(analyzer, 0, text.Length);
+        var hints = InlayHints.InRange(analyzer, 0, text.Length);
         var attrStart = text.IndexOf(attribute + "=\"", StringComparison.Ordinal) + attribute.Length + 2;
         var attrEnd = text.IndexOf('"', attrStart);
         var result = new System.Text.StringBuilder();
@@ -710,14 +710,14 @@ public class InlayHintTests(SampleProjectFixture sample)
     public void No_source_type_hint_when_the_path_names_its_own_start(string binding)
     {
         var text = Header + $"<StackPanel><TextBlock x:Name=\"Header\"/><TextBlock Text=\"{binding}\"/></StackPanel></UserControl>";
-        Assert.DoesNotContain(Features.InlayHintsIn(sample.Analyze(text), 0, text.Length), h => h.Label.StartsWith('(') && h.Label.EndsWith(").", StringComparison.Ordinal));
+        Assert.DoesNotContain(InlayHints.InRange(sample.Analyze(text), 0, text.Length), h => h.Label.StartsWith('(') && h.Label.EndsWith(").", StringComparison.Ordinal));
     }
 
     [Fact]
     public void The_source_type_hint_can_be_switched_off()
     {
         var text = Header + "<TextBlock Text=\"{Binding Title}\"/></UserControl>";
-        var hints = Features.InlayHintsIn(sample.Analyze(text), 0, text.Length, new InlayHintOptions(BindingSource: false));
+        var hints = InlayHints.InRange(sample.Analyze(text), 0, text.Length, new InlayHintOptions(BindingSource: false));
         Assert.Equal(["Path="], hints.Select(h => h.Label));
     }
 
@@ -727,7 +727,7 @@ public class InlayHintTests(SampleProjectFixture sample)
         Assert.Equal("[0:]Auto,[1:]*,[2:]2*", Hinted("<Grid ColumnDefinitions=\"Auto,*,2*\"/>", "ColumnDefinitions"));
         Assert.Equal("[0:]Auto, [1:]*", Hinted("<Grid RowDefinitions=\"Auto, *\"/>", "RowDefinitions"));
         var text = Header + "<Grid ColumnDefinitions=\"Auto,*,2*\"><Button Grid.Column=\"2\"/><Button Grid.Column=\"7\"/></Grid></UserControl>";
-        var hint = Assert.Single(Features.InlayHintsIn(sample.Analyze(text), 0, text.Length), h => h.Label.StartsWith('→'));
+        var hint = Assert.Single(InlayHints.InRange(sample.Analyze(text), 0, text.Length), h => h.Label.StartsWith('→'));
         Assert.Equal("→ 2*", hint.Label);
         Assert.Equal("Grid.Column=\"2\"", text[(text.LastIndexOf("Grid.Column=\"2\"", StringComparison.Ordinal))..hint.Offset]);
     }
@@ -737,7 +737,7 @@ public class InlayHintTests(SampleProjectFixture sample)
     {
         var text = Header + "<StackPanel><Border BoxShadow=\"1 2 4 0 #66000000\"/><Border BoxShadow=\"inset 0 0 Red, 0 0 10 2 rgb(0,0,255)\"/>"
                    + "<Border><Border.Styles><Style Selector=\"Border\"><Setter Property=\"BoxShadow\" Value=\"3 3 hsl(0,100%,50%)\"/></Style></Border.Styles></Border></StackPanel>\n</UserControl>";
-        var colors = Features.DocumentColors(sample.Analyze(text));
+        var colors = DocumentColors.Find(sample.Analyze(text));
         Assert.Equal(["#66000000", "#FF0000", "#0000FF", "#FF0000"], colors.Select(c => ColorSupport.Hex(c.Argb)));
         Assert.Equal("#66000000", text[colors[0].Start..colors[0].End]);
         Assert.Equal("rgb(0,0,255)", text[colors[2].Start..colors[2].End]);

@@ -23,7 +23,7 @@ internal abstract class LocationQueryHandler(Documents documents, string capabil
 internal sealed class DefinitionHandler(Documents documents) : LocationQueryHandler(documents, "definitionProvider")
 {
     public override string Method => "textDocument/definition";
-    protected override List<DefinitionTarget> Query(XamlAnalyzer analyzer, int offset) => Features.Definition(analyzer, offset);
+    protected override List<DefinitionTarget> Query(XamlAnalyzer analyzer, int offset) => Definition.At(analyzer, offset);
 }
 
 /// <summary><c>textDocument/typeDefinition</c>: the type of the symbol under the cursor, or the <c>x:DataType</c> in scope.</summary>

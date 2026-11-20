@@ -14,7 +14,7 @@ internal sealed class DocumentColorHandler(Documents documents) : SyncRequestHan
     {
         var array = new JsonArray();
         if (!documents.TryAnalyze(p, out _, out var analysis)) return array;
-        foreach (var c in Features.DocumentColors(analysis.Analyzer))
+        foreach (var c in DocumentColors.Find(analysis.Analyzer))
         {
             array.Add(new JsonObject
             {
