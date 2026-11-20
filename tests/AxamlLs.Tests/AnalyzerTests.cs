@@ -115,4 +115,25 @@ public class AnalyzerTests(SampleProjectFixture sample)
         Assert.Contains(diagnostics, d => d.Code == Codes.XmlError);
         Assert.Contains(diagnostics, d => d.Code == Codes.MissingDataType);
     }
+
+    [Fact]
+    public void A_reanalysis_of_the_same_text_reuses_its_line_index_and_xml_check()
+    {
+        var text = "<UserControl xmlns=\"https://github.com/avaloniaui\"><TextBlock/></UserControl";
+        var lines = new LineIndex(text);
+        var first = XamlAnalyzer.Analyze(text, project: null, compiledDefault: true, lines: lines);
+        Assert.Same(lines, first.Lines);
+        Assert.NotNull(first.WellFormed.Error);
+
+        // Same string (a project reload): the check is reused, and the error is still reported.
+        var again = XamlAnalyzer.Analyze(text, project: null, compiledDefault: true, wellFormed: first.WellFormed);
+        Assert.Same(first.WellFormed, again.WellFormed);
+        Assert.Contains(again.Result.Diagnostics, d => d.Code == Codes.XmlError);
+
+        // An edit makes a new string, even with equal content: checked again.
+        var edited = new string(text.AsSpan());
+        Assert.NotSame(first.WellFormed, XamlAnalyzer.Analyze(edited, project: null, compiledDefault: true, wellFormed: first.WellFormed).WellFormed);
+        var fixedText = text + ">";
+        Assert.Null(XamlAnalyzer.Analyze(fixedText, project: null, compiledDefault: true, wellFormed: first.WellFormed).WellFormed.Error);
+    }
 }

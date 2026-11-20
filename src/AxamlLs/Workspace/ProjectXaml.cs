@@ -49,8 +49,8 @@ public sealed class ProjectXaml
     private XamlFile? File(string path, ProjectSnapshot? project, ProjectHost host, IReadOnlyDictionary<string, string> openBuffers, long generation)
     {
         var fromBuffer = openBuffers.TryGetValue(path, out var text);
-        _cache.TryGetValue(path, out var e);
-        if (e != null && (!ReferenceEquals(e.Project, project) || e.FromBuffer != fromBuffer)) e = null;
+        _cache.TryGetValue(path, out var previous);
+        var e = previous != null && ReferenceEquals(previous.Project, project) && previous.FromBuffer == fromBuffer ? previous : null;
         DateTime stamp = default;
         if (fromBuffer)
         {
@@ -69,10 +69,14 @@ public sealed class ProjectXaml
             }
         }
 
+        // Analyzed against another project snapshot but the text is the same: keep the text (no re-read) and its XML check.
+        var sameText = previous != null && previous.FromBuffer == fromBuffer
+            && (fromBuffer ? string.Equals(previous.File.Text, text, StringComparison.Ordinal) : previous.Stamp == stamp);
+        if (sameText) text = previous!.File.Text;
         text ??= System.IO.File.ReadAllText(path);
         var context = ProjectContext.For(path, host, host.Indexes, () => openBuffers, () => Files(host, openBuffers));
-        var analyzer = XamlAnalyzer.Analyze(text, project, host.CompiledBindingsDefault, context);
-        var file = new XamlFile(path, text, analyzer, new LineIndex(text));
+        var analyzer = XamlAnalyzer.Analyze(text, project, host.CompiledBindingsDefault, context, wellFormed: sameText ? previous!.File.Analyzer.WellFormed : null);
+        var file = new XamlFile(path, text, analyzer, analyzer.Lines);
         _cache[path] = new Entry(fromBuffer, stamp, generation, fromBuffer ? text : "", project, file);
         return file;
     }

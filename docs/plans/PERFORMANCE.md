@@ -259,6 +259,26 @@ source of truth for *messages*, and run it only when needed:
 **Done when:** the bench `typing` median improves by the measured share, and the Orion diagnostics check (read-only)
 reports exactly what it did before.
 
+**Status: P2.1 done; P2.2 not started, by the rule above.**
+- Measured share of `wellformed` in analysis time:
+
+  | Where | Share |
+  |---|---|
+  | Bench project, server `phase` tag | under 1% (0.06 ms against 13 ms for `resolve`) |
+  | Orion, 62 files, project loaded | 6% |
+  | Samples, no project | 17% |
+
+  Real projects are under 15%, so P2.2 stays unbuilt. Revisit it if a profile shows otherwise.
+- P2.1 as implemented:
+  - `XamlAnalyzer.Analyze` takes the caller's `LineIndex` (exposed as `Lines`, built lazily when not given) and the
+    `WellFormed` check of an earlier analysis. The check is reused when the text is the same string object.
+  - `Documents` passes both, so a re-analysis after a project reload skips the XML reader.
+  - `ProjectXaml` keeps an unchanged file's text across project snapshots (no re-read from disk) and reuses its check.
+- Checks:
+  - `check` output on Orion and on `samples/` is identical to the previous commit (Orion: 0 diagnostics; samples:
+    10 errors).
+  - Bench against `main`: no regression. `typing` is unchanged, as expected for a sub-1% share.
+
 ---
 
 ## P3. Name pre-filter for references, rename, and C# literals

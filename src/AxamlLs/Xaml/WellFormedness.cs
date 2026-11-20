@@ -9,6 +9,16 @@ public static partial class WellFormedness
     /// <summary>Where the XML stops being well formed (0-based line and column) and why, in the XML reader's words.</summary>
     public sealed record XmlError(int Line, int Character, string Message);
 
+    /// <summary>The check of one text; <see cref="Error"/> is null when it is well formed.</summary>
+    public sealed record Checked(string Text, XmlError? Error);
+
+    /// <summary>
+    /// The check of <paramref name="text"/>, reusing <paramref name="earlier"/> when it was made for this same string
+    /// object (a re-analysis after the project changed, not after an edit: an edit always makes a new string).
+    /// </summary>
+    public static Checked Check(string text, Checked? earlier) =>
+        earlier != null && ReferenceEquals(earlier.Text, text) ? earlier : new Checked(text, Check(text));
+
     public static XmlError? Check(string text)
     {
         var settings = new XmlReaderSettings

@@ -41,8 +41,15 @@ public sealed class XamlAnalyzer
     private readonly Dictionary<(XmlElement, string), ITypeSymbol?> _bindingResults = [];
     private readonly Dictionary<int, ITypeSymbol?> _bindingOrigins = [];
     private HashSet<string>? _ignorablePrefixes;
+    private LineIndex? _lines;
 
     public AnalysisResult Result => _r;
+
+    /// <summary>The line index of the analyzed text: the one passed to <see cref="Analyze"/>, else built on first use.</summary>
+    public LineIndex Lines => LazyInitializer.EnsureInitialized(ref _lines, () => new LineIndex(_doc.Text));
+
+    /// <summary>The strict XML check of the text; pass it to the next analysis of the same text to skip it.</summary>
+    public WellFormedness.Checked WellFormed { get; private set; } = null!;
 
     /// <summary>What this analysis may ask about the rest of the project (given at creation).</summary>
     public ProjectContext Context { get; }
@@ -96,26 +103,29 @@ public sealed class XamlAnalyzer
     /// <param name="compiledDefault">Whether bindings are compiled unless x:CompileBindings says otherwise.</param>
     /// <param name="context">What the analysis may ask about the rest of the project; none = this document only.</param>
     /// <param name="metrics">Receives the time of each phase (parse, wellformed, resolve), when given.</param>
-    public static XamlAnalyzer Analyze(string text, ProjectSnapshot? project, bool compiledDefault, ProjectContext? context = null, ServerMetrics? metrics = null)
+    /// <param name="lines">The text's line index when the caller already has one (the server does), else built if needed.</param>
+    /// <param name="wellFormed">The <see cref="WellFormed"/> of an earlier analysis; reused when it is of this same text.</param>
+    public static XamlAnalyzer Analyze(string text, ProjectSnapshot? project, bool compiledDefault, ProjectContext? context = null, ServerMetrics? metrics = null,
+        LineIndex? lines = null, WellFormedness.Checked? wellFormed = null)
     {
         var start = metrics?.Timestamp() ?? 0;
         var doc = XmlDoc.Parse(text);
         metrics?.AnalysisPhaseSince(ServerMetrics.Phase.Parse, start);
-        var analyzer = new XamlAnalyzer(doc, project, compiledDefault, context ?? ProjectContext.None);
-        analyzer.Run(text, metrics);
+        var analyzer = new XamlAnalyzer(doc, project, compiledDefault, context ?? ProjectContext.None) { _lines = lines };
+        analyzer.Run(text, metrics, wellFormed);
         return analyzer;
     }
 
-    private void Run(string text, ServerMetrics? metrics)
+    private void Run(string text, ServerMetrics? metrics, WellFormedness.Checked? earlier)
     {
         var phaseStart = metrics?.Timestamp() ?? 0;
-        var xmlError = WellFormedness.Check(text);
+        WellFormed = WellFormedness.Check(text, earlier);
+        var xmlError = WellFormed.Error;
         metrics?.AnalysisPhaseSince(ServerMetrics.Phase.WellFormed, phaseStart);
         phaseStart = metrics?.Timestamp() ?? 0;
         if (xmlError != null)
         {
-            var lines = new LineIndex(text);
-            var start = lines.GetOffset(xmlError.Line, xmlError.Character);
+            var start = Lines.GetOffset(xmlError.Line, xmlError.Character);
             var end = start;
             while (end < text.Length && !char.IsWhiteSpace(text[end]) && text[end] is not ('<' or '>')) end++;
             if (end == start) end = Math.Min(start + 1, text.Length);

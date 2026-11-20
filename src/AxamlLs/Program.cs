@@ -47,7 +47,7 @@ static async Task<int> CheckAsync(string[] targets)
         if (host != null) await host.EnsureLoadedAsync();
         var text = await File.ReadAllTextAsync(file);
         var analyzer = XamlAnalyzer.Analyze(text, host?.Current, host?.CompiledBindingsDefault ?? false);
-        var lines = new LineIndex(text);
+        var lines = analyzer.Lines;
         foreach (var d in analyzer.Result.Diagnostics.OrderBy(d => d.Start))
         {
             var (line, col) = lines.GetPosition(d.Start);

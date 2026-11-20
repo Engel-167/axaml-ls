@@ -106,8 +106,10 @@ internal sealed class Documents(WorkspaceManager workspace, ProjectLoadProgress 
 
             var indexes = host?.Indexes ?? workspace.IndexesFor(System.IO.Path.GetDirectoryName(doc.Path)!);
             var context = ProjectContext.For(doc.Path, host, indexes, OpenBuffers, host == null ? null : () => ProjectFiles(host));
-            var analyzer = XamlAnalyzer.Analyze(text, project, host?.CompiledBindingsDefault ?? false, context, metrics);
-            var analysis = new DocumentAnalysis(version, project, analyzer, new LineIndex(text));
+            // After a project reload the text is often the same string as last time: its XML check is reused.
+            var analyzer = XamlAnalyzer.Analyze(text, project, host?.CompiledBindingsDefault ?? false, context, metrics,
+                new LineIndex(text), cached?.Analyzer.WellFormed);
+            var analysis = new DocumentAnalysis(version, project, analyzer, analyzer.Lines);
             doc.Cached = analysis;
             Log.Debug($"Analyzed {System.IO.Path.GetFileName(doc.Path)} v{version}: {analyzer.Result.Diagnostics.Count} diagnostics (project {(project == null ? "not loaded" : "loaded")})");
             return analysis;

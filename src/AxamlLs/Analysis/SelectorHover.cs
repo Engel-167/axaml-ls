@@ -99,7 +99,7 @@ public static partial class Selectors
 
     private static string ClassHover(XamlAnalyzer analyzer, string cls)
     {
-        var origin = new XamlFile(analyzer.DocumentPath ?? "", analyzer.Result.Doc.Text, analyzer, new LineIndex(analyzer.Result.Doc.Text));
+        var origin = new XamlFile(analyzer.DocumentPath ?? "", analyzer.Result.Doc.Text, analyzer, analyzer.Lines);
         var files = analyzer.ProjectFiles?.Invoke() ?? [origin];
         var uses = Targets.TextOccurrences(new StyleClassTarget(cls), origin, files, analyzer.ProjectDirectory).Where(o => !o.IsSelector).ToList();
         if (uses.Count == 0) return $"Style class `{cls}`: no element in the project sets it.";
