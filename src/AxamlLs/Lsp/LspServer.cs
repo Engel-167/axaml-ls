@@ -404,7 +404,7 @@ public sealed class LspServer : IDisposable
     }
 
     /// <summary>The current text, its line index and parse tree: from the last analysis when it is of this version, else freshly made.</summary>
-    private (string Text, LineIndex Lines, Xaml.XmlDoc? Doc) CurrentText(OpenDocument doc)
+    private static (string Text, LineIndex Lines, Xaml.XmlDoc? Doc) CurrentText(OpenDocument doc)
     {
         string text;
         int version;
@@ -983,5 +983,6 @@ public sealed class LspServer : IDisposable
     {
         _workspace.Dispose();
         _shutdown.Dispose();
+        _rpc.Dispose();
     }
 }

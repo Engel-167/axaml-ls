@@ -569,7 +569,7 @@ public class SetterAndAssetTests(SampleProjectFixture sample)
         Assert.Contains(assets, c => c.Label == "logo.png" && c.Kind == Features.ItemKind.File);
 
         // Images only, no svg for a plain Image; any file for a Uri.
-        Assert.DoesNotContain(CompleteAt("<Image Source=\"/Assets/Icons/|\"/>"), c => c.Label.EndsWith(".svg"));
+        Assert.DoesNotContain(CompleteAt("<Image Source=\"/Assets/Icons/|\"/>"), c => c.Label.EndsWith(".svg", StringComparison.Ordinal));
         Assert.Contains(CompleteAt("<StyleInclude Source=\"../|\"/>"), c => c.Label == "MainView.axaml" || c.Label == "Views/");
     }
 
@@ -710,7 +710,7 @@ public class InlayHintTests(SampleProjectFixture sample)
     public void No_source_type_hint_when_the_path_names_its_own_start(string binding)
     {
         var text = Header + $"<StackPanel><TextBlock x:Name=\"Header\"/><TextBlock Text=\"{binding}\"/></StackPanel></UserControl>";
-        Assert.DoesNotContain(Features.InlayHintsIn(sample.Analyze(text), 0, text.Length), h => h.Label.StartsWith('(') && h.Label.EndsWith(")."));
+        Assert.DoesNotContain(Features.InlayHintsIn(sample.Analyze(text), 0, text.Length), h => h.Label.StartsWith('(') && h.Label.EndsWith(").", StringComparison.Ordinal));
     }
 
     [Fact]

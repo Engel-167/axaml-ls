@@ -12,6 +12,7 @@ public static class Edits
     /// Builds <c>{ "changes": { uri: [ { range, newText } ] } }</c>. Edits are sorted per file, exact duplicates dropped,
     /// and of two overlapping edits only the first is kept (the rest are logged). Zed applies <c>changes</c> to files that are not open too.
     /// </summary>
+    /// <param name="edits">Edits by file path and absolute offsets.</param>
     /// <param name="textOf">The text the offsets refer to: the open buffer if the file is open, else the disk text.</param>
     public static JsonObject ToWorkspaceEdit(IEnumerable<FileEdit> edits, Func<string, (string Text, LineIndex Lines)> textOf)
     {

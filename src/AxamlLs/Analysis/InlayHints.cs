@@ -52,7 +52,7 @@ public static class InlayHints
                 var type = Members.ValueTypeOf(targetProperty(el, attr)) is { } t ? Members.UnwrapNullable(t) : null;
                 foreach (var part in Parts(type?.Name, text))
                 {
-                    if (part.Short != null) hints.Add(new InlayHint(part.Start, part.Short + ":", true));
+                    if (part.Abbreviation != null) hints.Add(new InlayHint(part.Start, part.Abbreviation + ":", true));
                 }
             }
         }
@@ -78,10 +78,10 @@ public static class InlayHints
     }
 
     /// <summary>
-    /// One piece of a compact value: where it is, its text, the short label hints show (null = no hint),
-    /// the full name hover shows, and which shadow it belongs to (BoxShadows only).
+    /// One piece of a compact value: where it is, its text, the abbreviation inlay hints show (null = no hint),
+    /// the name hover shows, and which shadow it belongs to (BoxShadows only).
     /// </summary>
-    public readonly record struct ValuePart(int Start, int End, string Text, string? Short, string Full, int Group = 0);
+    public readonly record struct ValuePart(int Start, int End, string Text, string? Abbreviation, string Name, int Group = 0);
 
     private static readonly string[][] ThicknessShort = [["all"], ["lr", "tb"], ["l", "t", "r", "b"]];
     private static readonly string[][] CornerShort = [["all"], ["top", "bottom"], ["tl", "tr", "br", "bl"]];
@@ -134,7 +134,7 @@ public static class InlayHints
             };
             return v.Length == 4 ? [string.Join(" · ", sides.Select((n, i) => $"{n} {v[i]}"))] : [];
         }
-        return [.. parts.GroupBy(x => x.Group).Select(g => string.Join(" · ", g.Select(x => $"{x.Full} {x.Text}".Trim())))];
+        return [.. parts.GroupBy(x => x.Group).Select(g => string.Join(" · ", g.Select(x => $"{x.Name} {x.Text}".Trim())))];
     }
 
     /// <summary>The space- or comma-separated pieces of a value, with absolute offsets.</summary>

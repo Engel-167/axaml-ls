@@ -22,6 +22,9 @@ public sealed class ProjectSnapshot
     /// <summary>XML namespace URI → CLR namespaces, from [XmlnsDefinition] attributes.</summary>
     public IReadOnlyDictionary<string, List<string>> Xmlns { get; }
 
+    /// <param name="projectPath">The .csproj this snapshot belongs to.</param>
+    /// <param name="compilation">The project's compilation, source generators included.</param>
+    /// <param name="compiledBindingsDefault">Whether {Binding} means a compiled binding in this project.</param>
     /// <param name="previous">
     /// The snapshot this one replaces: when the referenced assemblies are the same files (the usual case after a .cs
     /// edit), its scans of their compiled themes and resources are reused instead of being merged again.

@@ -279,7 +279,7 @@ public sealed class XamlAnalyzer
     }
 
     /// <summary>The element's DataContext="{…}" attribute when it decides the data type (no x:DataType on the element).</summary>
-    private XmlAttr? InferrableDataContext(XmlElement el, ElementInfo info)
+    private static XmlAttr? InferrableDataContext(XmlElement el, ElementInfo info)
     {
         if (info.IsPropertyElement || XAttr(el, "DataType") != null) return null;
         var attr = el.Attr("DataContext");

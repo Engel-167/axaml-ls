@@ -127,7 +127,7 @@ public static class ClassIndex
     }
 
     /// <summary>The control types a ControlTemplate is for, as written; none when it can't be told.</summary>
-    private static IEnumerable<string> TemplateTargets(XmlElement template)
+    private static List<string> TemplateTargets(XmlElement template)
     {
         if (template.Attr("TargetType") is { HasValue: true } own && !string.IsNullOrWhiteSpace(own.Value))
             return [TypeText(own.Value)];

@@ -13,9 +13,9 @@ public class ProjectXamlTests(SampleProjectFixture sample)
     public void Finds_every_axaml_file_of_the_project()
     {
         var files = new ProjectXaml().Files(sample.Host, NoBuffers);
-        Assert.Contains(files, f => f.Path.EndsWith("MainView.axaml"));
-        Assert.Contains(files, f => f.Path.EndsWith("Broken.axaml"));
-        Assert.Contains(files, f => f.Path.EndsWith("Second.axaml"));
+        Assert.Contains(files, f => f.Path.EndsWith("MainView.axaml", StringComparison.Ordinal));
+        Assert.Contains(files, f => f.Path.EndsWith("Broken.axaml", StringComparison.Ordinal));
+        Assert.Contains(files, f => f.Path.EndsWith("Second.axaml", StringComparison.Ordinal));
         Assert.DoesNotContain(files, f => f.Path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"));
     }
 

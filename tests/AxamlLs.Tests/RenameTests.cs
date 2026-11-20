@@ -55,7 +55,7 @@ public class RenameTests(SampleProjectFixture sample)
         Assert.Null(result.Error);
         var changed = _p.Apply(result.Edits);
         Assert.Contains("private string _heading", changed["MainViewModel.cs"]);
-        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(changed["Second.axaml"], "Binding Heading").Count);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Count(changed["Second.axaml"], "Binding Heading"));
         Assert.Contains("{Binding Heading}", changed["MainView.axaml"]);
     }
 

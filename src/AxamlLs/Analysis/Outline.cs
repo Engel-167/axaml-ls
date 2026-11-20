@@ -8,8 +8,11 @@ public sealed record OutlineSymbol(string Name, string? Detail, int Kind, int St
 /// <summary>The document outline: one symbol per element, nested, named by what identifies it (name, key, selector, classes).</summary>
 public static class Outline
 {
-    // LSP SymbolKind values.
-    public const int Namespace = 3, Class = 5, Property = 7, Field = 8, Constant = 14, Object = 19;
+    // LSP SymbolKind values, named as in the specification (docs/ENGINEERING.md I3).
+    public const int Namespace = 3, Class = 5, Property = 7, Field = 8, Constant = 14;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1720", Justification = "LSP SymbolKind.Object")]
+    public const int Object = 19;
 
     public static List<OutlineSymbol> Build(XamlAnalyzer analyzer)
     {

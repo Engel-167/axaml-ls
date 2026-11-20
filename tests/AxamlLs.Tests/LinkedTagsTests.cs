@@ -13,17 +13,25 @@ public class LinkedTagsTests
         return [text[open.Start..open.End], text[close.Start..close.End], text[(close.Start - 2)..close.Start]];
     }
 
+    /// <summary>The linked ranges where a pair is expected: fails the test (not with a null reference) when there is none.</summary>
+    private static string[] Linked(string marked)
+    {
+        var ranges = At(marked);
+        Assert.NotNull(ranges);
+        return ranges;
+    }
+
     [Fact]
     public void Start_and_end_tag_names_are_linked() =>
-        Assert.Equal(["Grid", "Grid", "</"], At("<Window><Gr|id Margin=\"4\"><Button/></Grid></Window>"));
+        Assert.Equal(["Grid", "Grid", "</"], Linked("<Window><Gr|id Margin=\"4\"><Button/></Grid></Window>"));
 
     [Fact]
     public void Works_from_the_end_tag_and_with_prefixes() =>
-        Assert.Equal(["local:Card", "local:Card", "</"], At("<Window><local:Card></local:Ca|rd></Window>"));
+        Assert.Equal(["local:Card", "local:Card", "</"], Linked("<Window><local:Card></local:Ca|rd></Window>"));
 
     [Fact]
     public void Edges_of_the_name_count() =>
-        Assert.Equal(["Grid", "Grid", "</"], At("<Window><Grid|></Grid></Window>"));
+        Assert.Equal(["Grid", "Grid", "</"], Linked("<Window><Grid|></Grid></Window>"));
 
     [Fact]
     public void Nothing_for_self_closing_tags_attributes_or_text()

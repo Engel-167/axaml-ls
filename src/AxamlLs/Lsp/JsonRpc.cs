@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 namespace AxamlLs.Lsp;
 
 /// <summary>LSP base protocol: Content-Length framed JSON-RPC 2.0 over a pair of streams.</summary>
-public sealed class JsonRpc(Stream input, Stream output)
+public sealed class JsonRpc(Stream input, Stream output) : IDisposable
 {
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly BufferedStream _input = new(input);
@@ -93,6 +93,12 @@ public sealed class JsonRpc(Stream input, Stream output)
         {
             _writeLock.Release();
         }
+    }
+
+    public void Dispose()
+    {
+        _input.Dispose();
+        _writeLock.Dispose();
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };

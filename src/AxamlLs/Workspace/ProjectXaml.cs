@@ -31,6 +31,7 @@ public sealed class ProjectXaml
         analyzer.ProjectDirectory = host?.ProjectDirectory;
     }
 
+    /// <param name="host">The project whose .axaml files are listed.</param>
     /// <param name="openBuffers">Unsaved editor contents by path; they win over the disk.</param>
     public IReadOnlyList<XamlFile> Files(ProjectHost host, IReadOnlyDictionary<string, string> openBuffers)
     {
