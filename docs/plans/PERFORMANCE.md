@@ -493,7 +493,7 @@ of it.
 - An image over the cap gives markdown with no `data:` URI but with dimensions.
 - SVG minification keeps every `<path d=…>` byte-identical.
 
-**Status: P6.1 done; P6.2 waits for a decision on the package.**
+**Status: P6.1 done. P6.2 decided against (no image package): large images show their size line only.**
 - `Analysis/ImageInfo.cs` reads the pixel size from the header of PNG, JPEG, GIF, BMP (both header kinds), ICO
   (largest entry) and WebP (`VP8`, `VP8L`, `VP8X`). JPEG walks its segments by length to the first frame marker.
 - `Analysis/AssetPreview.cs` holds the preview code, moved out of `Assets.cs` (now ~330 lines, off the U1 list):
