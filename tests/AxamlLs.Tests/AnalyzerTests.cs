@@ -44,10 +44,10 @@ public class AnalyzerTests(SampleProjectFixture sample)
         var analyzer = sample.Analyze(text);
         Assert.Empty(analyzer.Result.Diagnostics);
         var offset = text.IndexOf("Title}", StringComparison.Ordinal) + 2;
-        var hover = Features.Hover(analyzer, offset);
+        var hover = Hover.At(analyzer, offset);
         Assert.NotNull(hover);
         Assert.Contains("string MainViewModel.Title", hover.Markdown);
-        var def = Assert.Single(Features.Definition(analyzer, offset));
+        var def = Assert.Single(Definition.At(analyzer, offset));
         Assert.EndsWith("MainViewModel.cs", def.FilePath);
     }
 
@@ -114,5 +114,26 @@ public class AnalyzerTests(SampleProjectFixture sample)
         var diagnostics = XamlAnalyzer.Analyze(text, project: null, compiledDefault: true).Result.Diagnostics;
         Assert.Contains(diagnostics, d => d.Code == Codes.XmlError);
         Assert.Contains(diagnostics, d => d.Code == Codes.MissingDataType);
+    }
+
+    [Fact]
+    public void A_reanalysis_of_the_same_text_reuses_its_line_index_and_xml_check()
+    {
+        var text = "<UserControl xmlns=\"https://github.com/avaloniaui\"><TextBlock/></UserControl";
+        var lines = new LineIndex(text);
+        var first = XamlAnalyzer.Analyze(text, project: null, compiledDefault: true, lines: lines);
+        Assert.Same(lines, first.Lines);
+        Assert.NotNull(first.WellFormed.Error);
+
+        // Same string (a project reload): the check is reused, and the error is still reported.
+        var again = XamlAnalyzer.Analyze(text, project: null, compiledDefault: true, wellFormed: first.WellFormed);
+        Assert.Same(first.WellFormed, again.WellFormed);
+        Assert.Contains(again.Result.Diagnostics, d => d.Code == Codes.XmlError);
+
+        // An edit makes a new string, even with equal content: checked again.
+        var edited = new string(text.AsSpan());
+        Assert.NotSame(first.WellFormed, XamlAnalyzer.Analyze(edited, project: null, compiledDefault: true, wellFormed: first.WellFormed).WellFormed);
+        var fixedText = text + ">";
+        Assert.Null(XamlAnalyzer.Analyze(fixedText, project: null, compiledDefault: true, wellFormed: first.WellFormed).WellFormed.Error);
     }
 }

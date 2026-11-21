@@ -25,7 +25,8 @@ the exact behavior, the tests to add, and how to check it on a real project.
 - `src/AxamlLs/` is the server (.NET 10, C#). Key files:
   - `Lsp/LspServer.cs`: JSON-RPC dispatch (`HandleRequestAsync` switch), capabilities (`Initialize`), publishing diagnostics (`Schedule`), per-document analysis cache (`Analyze(doc)`).
   - `Analysis/XamlAnalyzer.cs`: analyzes one document. It produces `AnalysisResult` (`Diagnostics`, `Refs` = `SymbolRef` list with offsets → Roslyn symbols, `Elements`, `Names`, `ClassType`). The server sets `ResourceProvider`, `StyleProvider`, `DocumentPath` and `ProjectDirectory` after `Analyze`.
-  - `Analysis/Features.cs`: hover, definition, completion, document colors, and helpers such as `TargetProperty(analyzer, el, attr)` (the C# property an attribute sets, Setter `Value` included), `ResourceKeyAt`, `AssetAt` and `Word`.
+  - `Analysis/Hover.cs`, `Definition.cs`, `Completion/` and `DocumentColors.cs`: one feature each. Shared lookups: `PropertyLookup.TargetProperty(analyzer, el, attr)` (the C# property an attribute sets, Setter `Value` included), `ResourceValues.KeyAt`, `Assets.At`.
+  - `Lsp/LspServer.cs` reads messages and dispatches to `Lsp/Handlers/` (one class per LSP method); `Documents`, `DiagnosticsPublisher` and `LspClient` hold the open files, diagnostics scheduling and messages to the editor.
   - `Analysis/Selectors.cs`: selector tokenizer (`Tokenize`), selector completion, `StyledType`, `TemplateParts`, `PseudoClasses`, `UnusedClasses`, `ClassesWithTypes`.
   - `Analysis/InlayHints.cs`, `Analysis/Assets.cs`, `Analysis/ColorSupport.cs`, `Analysis/Members.cs` (Roslyn symbol helpers).
   - `Xaml/XmlDoc.cs` (tolerant XML parser with offsets), `Xaml/MarkupExtension.cs` (`MappedText` = text plus a map back to document offsets; `MarkupExtension.Parse`), `Xaml/BindingPath.cs`.
@@ -51,7 +52,7 @@ the exact behavior, the tests to add, and how to check it on a real project.
 - JSON is built with `System.Text.Json.Nodes` (`JsonObject`, `JsonArray`), as in the existing handlers.
 - Offsets: analysis works in absolute UTF-16 offsets into the document text. Convert with `LineIndex.GetPosition(offset)` and `GetOffset(line, ch)` only at the LSP boundary.
 - Diagnostic codes live in `Codes` (`Analysis/AnalysisModel.cs`). Ranges: 00xx syntax, 01xx bindings, 02xx types and properties, 03xx code-behind, 04xx styles, 05xx files. New codes are given below.
-- Diagnostics that depend on *other* files (resources, classes, assets) are added in `LspServer.Schedule` after analysis, like `Features.AssetDiagnostics` and `Selectors.UnusedClasses`. They are not added in `XamlAnalyzer`, because the providers are set after `Analyze`.
+- Diagnostics that depend on *other* files (resources, classes, assets) are added in `DocumentDiagnostics.Collect` after analysis, like `Assets.Diagnostics` and `Selectors.UnusedClasses`. They are not added in `XamlAnalyzer`, because the providers are set after `Analyze`.
 - Every request handler must survive bad input: `HandleRequestAsync` already catches exceptions, but return empty results instead of throwing for normal "nothing here" cases.
 - **False positives are worse than missed errors.** When unsure (unresolved type, opaque object, unknown base), stay silent. This rule runs through the whole analyzer; keep following it.
 - Update `README.md` (features list, settings, known limits) in the same change as each feature.
@@ -109,7 +110,7 @@ Tests: two files, overlapping and duplicate edits, and a non-ASCII line (positio
 
 **Goal.** `{StaticResource Missing}` / `{DynamicResource Missing}` with a key declared nowhere is reported.
 
-**Where.** New `Analysis/ResourceCheck.cs` with `public static IEnumerable<XamlDiagnostic> Unknown(XamlAnalyzer analyzer)`. Call it in `LspServer.Schedule`, next to `Features.AssetDiagnostics`. Add `Codes.UnknownResource = "AXN0205"`.
+**Where.** New `Analysis/ResourceCheck.cs` with `public static IEnumerable<XamlDiagnostic> Unknown(XamlAnalyzer analyzer)`. Call it in `DocumentDiagnostics.Collect`, next to `Assets.Diagnostics`. Add `Codes.UnknownResource = "AXN0205"`.
 
 **Rules.**
 - Walk every attribute value that is a markup extension, including nested ones (`Value="{Binding X, Converter={StaticResource C}}"`) and markup in `Setter Value`.
@@ -161,7 +162,7 @@ public static IEnumerable<(string Path, int Start, int End)> Occurrences(Target 
 **`At`** recognizes, in this order:
 1. A selector token under the cursor (`Selectors.Tokenize` on the `Selector` attribute value, mapped with `MappedText`). `.Foo` → `StyleClassTarget("Foo")`; `#Foo` → `ElementNameTarget`.
 2. A `Classes` attribute value word → `StyleClassTarget`; the `Foo` part of a `Classes.Foo` attribute name → `StyleClassTarget`.
-3. An `x:Key` value → `ResourceKeyTarget`. Otherwise `Features.ResourceKeyAt` (cursor in `{StaticResource Foo}`) → `ResourceKeyTarget`.
+3. An `x:Key` value → `ResourceKeyTarget`. Otherwise `ResourceValues.KeyAt` (cursor in `{StaticResource Foo}`) → `ResourceKeyTarget`.
 4. An `x:Name`/`Name` value → `ElementNameTarget`. A `SymbolRef` whose `TargetElement != null` (`#name`, `ElementName=name`) → `ElementNameTarget` of that element's name.
 5. `analyzer.Result.RefAt(offset)` with a `Symbol` → `SymbolTarget`.
 
@@ -185,7 +186,7 @@ public static IEnumerable<(string Path, int Start, int End)> Occurrences(Target 
   - every `SymbolRef` in every `XamlFile` whose `Symbol` equals the target (`SymbolEqualityComparer.Default`; compare `OriginalDefinition`)
   - plus C# references via Roslyn: `SymbolFinder.FindReferencesAsync(symbol, solution)`, keeping only locations with `IsInSource` and a real file path (skip generated files; their path is under `obj/` or empty), plus the declaration locations
   - expose `ProjectHost.Solution` (today it's the private `_solution`) as a public read-only property
-  - for CommunityToolkit members, also include the user-written source: `[ObservableProperty]` field or partial property, `[RelayCommand]` method. `Features.DefinitionSymbols` already finds those; reuse it.
+  - for CommunityToolkit members, also include the user-written source: `[ObservableProperty]` field or partial property, `[RelayCommand]` method. `Definition.Symbols` already finds those; reuse it.
 
 ### Feature 3: Find all references
 
@@ -257,7 +258,7 @@ public static IEnumerable<(string Path, int Start, int End)> Occurrences(Target 
 
 ### Feature 5: Selector validation
 
-New diagnostics in `Selectors.cs`, added in `LspServer.Schedule` next to `UnusedClasses` (they need `StyleProvider` and themes):
+New diagnostics in `Selectors.cs`, added in `DocumentDiagnostics.Collect` next to `UnusedClasses` (they need `StyleProvider` and themes):
 
 | Code | When | Severity |
 |---|---|---|
@@ -282,7 +283,7 @@ New diagnostics in `Selectors.cs`, added in `LspServer.Schedule` next to `Unused
 
 ### Feature 6: Better hover
 
-Extend `Features.Hover`. Each case is a separate private method; return the first that applies.
+Extend `Hover.At` (`Analysis/Hover.cs`). Each case is a separate private method; return the first that applies.
 
 1. **Resource key** (extend the existing branch):
    - If the resource is a color or brush and its value parses (`ResourceColor`), prepend a swatch image: an SVG 14×14 `<rect>` filled with the color, base64-encoded as `![](data:image/svg+xml;base64,…)`. Zed renders `data:` images; see `Assets.PreviewMarkdown`.

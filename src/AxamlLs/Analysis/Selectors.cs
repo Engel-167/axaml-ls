@@ -91,7 +91,7 @@ public static partial class Selectors
 
     // ---------------------------------------------------------------- completion
 
-    public static void Complete(XamlAnalyzer analyzer, XmlElement el, XmlAttr attr, int offset, List<Features.Completion> list, ProjectStyles styles)
+    public static void Complete(XamlAnalyzer analyzer, XmlElement el, XmlAttr attr, int offset, List<CompletionItem> list, ProjectStyles styles)
     {
         var text = MappedText.FromAttribute(attr);
         var s = text.Text;
@@ -128,17 +128,17 @@ public static partial class Selectors
                     foreach (var (pseudo, declaringType) in PseudoClasses(owner))
                     {
                         var name = pseudo.TrimStart(':');
-                        if (seenPseudo.Add(name)) list.Add(new(name, Features.ItemKind.Keyword, $"pseudo-class of {declaringType}", null, name, false, A(ws), A(we), "0" + name));
+                        if (seenPseudo.Add(name)) list.Add(new(name, CompletionItemKind.Keyword, $"pseudo-class of {declaringType}", null, name, false, A(ws), A(we), "0" + name));
                     }
                     // Pseudo-classes the control's theme styles but the class does not declare (:error, :left …).
                     foreach (var (pseudo, themed) in ThemePseudoClasses(analyzer, owner))
                     {
                         var name = pseudo.TrimStart(':');
-                        if (seenPseudo.Add(name)) list.Add(new(name, Features.ItemKind.Keyword, $"pseudo-class used by {themed}'s theme", null, name, false, A(ws), A(we), "0" + name));
+                        if (seenPseudo.Add(name)) list.Add(new(name, CompletionItemKind.Keyword, $"pseudo-class used by {themed}'s theme", null, name, false, A(ws), A(we), "0" + name));
                     }
                 }
                 foreach (var (name, detail) in new[] { ("not", "matches when the selector inside does not"), ("is", "matches the type or a derived type"), ("nth-child", "position among siblings: 2n+1, odd, even"), ("nth-last-child", "position from the end") })
-                    list.Add(new(name + "(…)", Features.ItemKind.Function, detail, null, name + "($1)$0", true, A(ws), A(we), "1" + name));
+                    list.Add(new(name + "(…)", CompletionItemKind.Function, detail, null, name + "($1)$0", true, A(ws), A(we), "1" + name));
                 return;
             case '#':
                 CompleteNames(analyzer, el, s, compoundStart, ws, we, text, list, styles);
@@ -146,22 +146,22 @@ public static partial class Selectors
             case '/':
                 // "/tem|" → "/template/"
                 var end = we < s.Length && s[we] == '/' ? we + 1 : we;
-                list.Add(new("/template/", Features.ItemKind.Keyword, "match inside the control's template", null, "/template/ ", false, A(ws - 1), A(end)));
+                list.Add(new("/template/", CompletionItemKind.Keyword, "match inside the control's template", null, "/template/ ", false, A(ws - 1), A(end)));
                 return;
         }
 
         // A type (start, after a space, '>', ',' or '(').
         if (char.IsWhiteSpace(before) && s[..ws].Trim().Length > 0 && !s[..ws].TrimEnd().EndsWith(',') && !s[..ws].TrimEnd().EndsWith('>'))
-            list.Add(new("/template/", Features.ItemKind.Keyword, "match inside the template of the control before", null, "/template/ ", false, A(ws), A(we), "2"));
+            list.Add(new("/template/", CompletionItemKind.Keyword, "match inside the template of the control before", null, "/template/ ", false, A(ws), A(we), "2"));
         CompleteTypes(analyzer, el, A(ws), A(we), list, pipe: true);
     }
 
     /// <summary>Control types for a selector (prefix|Type) or $parent[prefix:Type].</summary>
-    public static void CompleteTypes(XamlAnalyzer analyzer, XmlElement el, int start, int end, List<Features.Completion> list, bool pipe)
+    public static void CompleteTypes(XamlAnalyzer analyzer, XmlElement el, int start, int end, List<CompletionItem> list, bool pipe)
     {
         var p = analyzer.Project;
         if (p == null) return;
-        foreach (var (prefix, ns) in Features.DeclaredNamespaces(el))
+        foreach (var (prefix, ns) in el.DeclaredNamespaces())
         {
             if (ns is XamlNamespaces.X or XamlNamespaces.Blend or XamlNamespaces.MarkupCompatibility) continue;
             var own = ns.StartsWith("using:", StringComparison.Ordinal) || ns.StartsWith("clr-namespace:", StringComparison.Ordinal);
@@ -169,13 +169,13 @@ public static partial class Selectors
             {
                 if (type.IsStatic || type.IsGenericType || type.TypeKind != TypeKind.Class || !Members.InheritsByName(type, "StyledElement")) continue;
                 var label = prefix.Length == 0 ? type.Name : $"{prefix}{(pipe ? '|' : ':')}{type.Name}";
-                list.Add(new(label, Features.ItemKind.Class, type.ToDisplayString(), null, label, false, start, end, (own ? "3" : "4") + label));
+                list.Add(new(label, CompletionItemKind.Class, type.ToDisplayString(), null, label, false, start, end, (own ? "3" : "4") + label));
             }
         }
     }
 
     private static void CompleteNames(XamlAnalyzer analyzer, XmlElement el, string s, int compoundStart, int ws, int we, MappedText text,
-        List<Features.Completion> list, ProjectStyles styles)
+        List<CompletionItem> list, ProjectStyles styles)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         // After /template/: the named parts of the template of the control before it, of the type written before '#'.
@@ -193,7 +193,7 @@ public static partial class Selectors
                     if (partFilter != null && (partType == null || !Members.IsSameOrDerived(partType, partFilter))) continue;
                     if (!seen.Add(part.Name)) continue;
                     var typeName = partType?.Name ?? part.TypeName.Split('.', ':').Last();
-                    list.Add(new(part.Name, Features.ItemKind.Field, $"{typeName} in {themed}'s template", null, part.Name, false, text.Abs(ws), text.Abs(we), "0" + part.Name));
+                    list.Add(new(part.Name, CompletionItemKind.Field, $"{typeName} in {themed}'s template", null, part.Name, false, text.Abs(ws), text.Abs(we), "0" + part.Name));
                 }
                 // Parts the control declares with [TemplatePart] (its contract, even when a theme does not use them).
                 foreach (var t in Members.SelfAndBases(owner))
@@ -204,7 +204,7 @@ public static partial class Selectors
                         var partType = a.ConstructorArguments.Length > 1 ? a.ConstructorArguments[1].Value as ITypeSymbol : null;
                         if (partFilter != null && (partType == null || !Members.IsSameOrDerived(partType, partFilter))) continue;
                         if (!seen.Add(name)) continue;
-                        list.Add(new(name, Features.ItemKind.Field, $"{partType?.Name ?? "part"} declared by {t.Name}", null, name, false, text.Abs(ws), text.Abs(we), "1" + name));
+                        list.Add(new(name, CompletionItemKind.Field, $"{partType?.Name ?? "part"} declared by {t.Name}", null, name, false, text.Abs(ws), text.Abs(we), "1" + name));
                     }
                 }
             }
@@ -212,7 +212,7 @@ public static partial class Selectors
         }
         foreach (var (name, element) in analyzer.Result.Names)
         {
-            if (seen.Add(name)) list.Add(new(name, Features.ItemKind.Variable, "<" + element.Name + ">", null, name, false, text.Abs(ws), text.Abs(we), "2" + name));
+            if (seen.Add(name)) list.Add(new(name, CompletionItemKind.Variable, "<" + element.Name + ">", null, name, false, text.Abs(ws), text.Abs(we), "2" + name));
         }
     }
 
@@ -256,7 +256,7 @@ public static partial class Selectors
     /// e.g. Fluent's Button.accent), then classes styled without a type, then the other classes the project uses.
     /// </summary>
     public static void CompleteClassNames(XamlAnalyzer analyzer, XmlElement el, ITypeSymbol? elementType, ProjectStyles styles, int start, int end,
-        List<Features.Completion> list, Func<string, string> insert, Func<string, string>? label = null, bool snippet = false, ISet<string>? exclude = null)
+        List<CompletionItem> list, Func<string, string> insert, Func<string, string>? label = null, bool snippet = false, ISet<string>? exclude = null)
     {
         var best = new Dictionary<string, (string Rank, string Detail)>(StringComparer.Ordinal);
         void Offer(string cls, string rank, string detail)
@@ -289,7 +289,7 @@ public static partial class Selectors
         foreach (var (cls, (rank, detail)) in best)
         {
             var text = label?.Invoke(cls) ?? cls;
-            list.Add(new(text, Features.ItemKind.EnumMember, detail, null, insert(cls), snippet, start, end, rank + cls));
+            list.Add(new(text, CompletionItemKind.EnumMember, detail, null, insert(cls), snippet, start, end, rank + cls));
         }
     }
 

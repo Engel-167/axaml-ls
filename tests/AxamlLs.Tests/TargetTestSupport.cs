@@ -1,6 +1,7 @@
 using AxamlLs.Analysis;
 using AxamlLs.Lsp;
 using AxamlLs.Workspace;
+using AxamlLs.Xaml;
 
 namespace AxamlLs.Tests;
 
@@ -39,4 +40,54 @@ public sealed class ProjectTestContext(SampleProjectFixture sample)
     public Dictionary<string, string> Apply(IEnumerable<FileEdit> edits) =>
         edits.GroupBy(e => e.Path).ToDictionary(g => System.IO.Path.GetFileName(g.Key),
             g => Edits.Apply(Files.FirstOrDefault(f => f.Path == g.Key)?.Text ?? System.IO.File.ReadAllText(g.Key), g));
+}
+
+/// <summary>
+/// Runs a refactoring on a view of the sample project and checks what every refactoring must keep (features plan F10):
+/// the result is well formed and its analysis reports nothing new.
+/// </summary>
+internal sealed class RefactoringTestSupport(SampleProjectFixture sample)
+{
+    public const string Header = """
+        <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                     xmlns:vm="using:SampleApp.ViewModels" x:DataType="vm:MainViewModel">
+        """;
+
+    private static readonly string ViewPath = Path.Combine(SampleProjectFixture.SampleDir, "Views", "Test.axaml");
+
+    /// <summary>The file for a view's text; the cursor (and selection) is written as | (twice for a selection), and removed.</summary>
+    public (XamlFile File, int Start, int End) Open(string text)
+    {
+        var start = text.IndexOf('|');
+        var end = text.IndexOf('|', start + 1);
+        var clean = text.Replace("|", "", StringComparison.Ordinal);
+        var analyzer = sample.Analyze(clean, new ProjectContext(SampleProjectFixture.SampleDir, ViewPath, FileIndex: sample.Indexes.Files));
+        return (new XamlFile(ViewPath, clean, analyzer, new AxamlLs.Text.LineIndex(clean)), start, end < 0 ? start : end - 1);
+    }
+
+    public string? Title(AxamlLs.Analysis.Refactorings.IRefactoring refactoring, string text)
+    {
+        var (file, start, end) = Open(text);
+        return refactoring.TitleAt(file, start, end, AxamlLs.Analysis.Refactorings.RefactoringSettings.Default);
+    }
+
+    /// <summary>The text after the refactoring, checked: offered, edits only in this file, well formed, no new problems.</summary>
+    public string Apply(AxamlLs.Analysis.Refactorings.IRefactoring refactoring, string text, AxamlLs.Analysis.Refactorings.RefactoringSettings? settings = null)
+    {
+        var (file, start, end) = Open(text);
+        settings ??= AxamlLs.Analysis.Refactorings.RefactoringSettings.Default;
+        Assert.NotNull(refactoring.TitleAt(file, start, end, settings));
+        var edits = refactoring.Edits(file, start, end, settings);
+        Assert.NotEmpty(edits);
+        Assert.All(edits, e => Assert.Equal(file.Path, e.Path));
+        var after = Edits.Apply(file.Text, edits);
+        Assert.Null(WellFormedness.Check(after));
+        var before = Problems(file.Analyzer);
+        var now = Problems(sample.Analyze(after, file.Analyzer.Context));
+        foreach (var p in before) now.Remove(p);
+        Assert.Empty(now);
+        return after;
+    }
+
+    private static List<string> Problems(XamlAnalyzer analyzer) => [.. analyzer.Result.Diagnostics.Select(d => $"{d.Code}: {d.Message}")];
 }

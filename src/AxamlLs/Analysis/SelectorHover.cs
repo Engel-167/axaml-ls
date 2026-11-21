@@ -59,8 +59,8 @@ public static partial class Selectors
         {
             case SelectorTokenKind.Type:
                 if (ResolveType(analyzer, el, token.Text) is not { } type) return null;
-                var summary = Features.Summary(type);
-                return $"```csharp\n{Features.Describe(type)}\n```" + (summary != null ? "\n\n" + summary : "");
+                var summary = SymbolDocs.Summary(type);
+                return $"```csharp\n{SymbolDocs.Describe(type)}\n```" + (summary != null ? "\n\n" + summary : "");
 
             case SelectorTokenKind.Class when token.Text.Length > 1:
                 return ClassHover(analyzer, token.Text[1..]);
@@ -99,9 +99,9 @@ public static partial class Selectors
 
     private static string ClassHover(XamlAnalyzer analyzer, string cls)
     {
-        var origin = new XamlFile(analyzer.DocumentPath ?? "", analyzer.Result.Doc.Text, analyzer, new LineIndex(analyzer.Result.Doc.Text));
+        var origin = new XamlFile(analyzer.DocumentPath ?? "", analyzer.Result.Doc.Text, analyzer, analyzer.Lines);
         var files = analyzer.ProjectFiles?.Invoke() ?? [origin];
-        var uses = Targets.OccurrencesAsync(new StyleClassTarget(cls), origin, files, null).GetAwaiter().GetResult().Where(o => !o.IsSelector).ToList();
+        var uses = Targets.TextOccurrences(new StyleClassTarget(cls), origin, files).Where(o => !o.IsSelector).ToList();
         if (uses.Count == 0) return $"Style class `{cls}`: no element in the project sets it.";
         var lines = uses.Take(5).Select(o =>
         {

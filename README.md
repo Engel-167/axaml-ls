@@ -10,14 +10,14 @@ the server for you. Any other editor that speaks LSP can run it over stdio. For 
 
 ## Features
 
-- **Diagnostics** that match what Avalonia's XAML compiler reports, while you type.
+- **Diagnostics** that match what Avalonia's XAML compiler reports, while you type. Editors that ask for diagnostics (LSP pull: Zed, VS Code) get them for the file they show, and are told to ask again when an edit or a project change affects other files; others are sent them.
 - **Hover** on bindings, types, properties and handlers, with C# doc comments.
 - **Go to definition**: from a binding to the view-model property or field (also for `[ObservableProperty]` and `[RelayCommand]`), from an `x:Class`, `x:DataType` or element type to its class, from `Click="OnSave"` to the handler, and from `#name` to the element.
 - **Completion**: binding paths (members of the `x:DataType`, then `.`-chained), element names (with the closing tag), attributes, property values (enums, `True`/`False`, named colors, `FontWeight.Bold`-style statics, and fitting resources as `{StaticResource …}`/`{DynamicResource …}`, in `Setter Value` too), `x:DataType` types, markup extensions and `{Binding}` keys.
 - **Style selectors**: completion of control types, `.classes` the project sets, `:pseudo-classes` declared by the control (`:pointerover`, `:pressed`, …, plus `:not()`, `:is()`, `:nth-child()`), `/template/`, and `#PART_…` template parts: the ones the control's actual theme names (read from the compiled Fluent/Simple IL, or from the project's own `ControlTheme`s), filtered by the type before `#`. Selectors are colored by part (with semantic tokens on), and a class that no element in the project sets is faded with a hint (AXN0401).
 - **Classes**: `Classes="|"` and `Classes.|` offer class names, those styled for that control first (by the project's selectors or its theme, e.g. Fluent's `accent` on `Button`).
 - **Setter properties**: `<Setter Property="|">` offers the styled type's Avalonia properties (direct properties excluded, since styles can't set them); `Grid.|` offers Grid's attached properties.
-- **File paths** in `Svg Path`, `Image Source`, `Window Icon`, `StyleInclude`/`ResourceInclude Source` and other `Uri` values (and `{SvgImage …}`): folder-by-folder completion for `/…` (project root), `avares://Assembly/…` and paths relative to the file (`../…`), filtered to the file types the property takes; typing part of a name also finds matching files in deeper folders, so a whole path is one completion. Picking a folder inserts it without the slash: Zed never reopens the menu after a completion from a language server, but typing `/` does. The highlighted file shows an image preview (embedded as a `data:` URI on `completionItem/resolve`, since Zed's Markdown only renders those). A path to a project file that doesn't exist is a warning (AXN0501), and go-to-definition opens the file.
+- **File paths** in `Svg Path`, `Image Source`, `Window Icon`, `StyleInclude`/`ResourceInclude Source` and other `Uri` values (and `{SvgImage …}`): folder-by-folder completion for `/…` (project root), `avares://Assembly/…` and paths relative to the file (`../…`), filtered to the file types the property takes; typing part of a name also finds matching files in deeper folders, so a whole path is one completion. Picking a folder inserts it without the slash: Zed never reopens the menu after a completion from a language server, but typing `/` does. The highlighted file shows an image preview (embedded as a `data:` URI on `completionItem/resolve`, since Zed's Markdown only renders those) with its size in pixels and bytes; images over 256 KB show only that line. A path to a project file that doesn't exist is a warning (AXN0501), and go-to-definition opens the file.
 - **Inlay hints** that name the parts of compact values, as Rider does: `Padding="[lr:]7 [tb:]2"`, `Margin="[l:]0 [t:]4 [r:]8 [b:]0"`, `CornerRadius="[top:]9 [bottom:]4"` / `[tl:] [tr:] [br:] [bl:]`, `BoxShadow="[x:]1 [y:]2 [blur:]4 [spread:]0 #66000000"`, the implicit first key of markup extensions (`{Binding [Path=]Name}`, `{StaticResource [ResourceKey=]Key}`), the type a binding path starts from (`{Binding [Path=][(MainViewModel).]Title}`, switchable, see below), and Grid definitions (`ColumnDefinitions="[0:]Auto,[1:]*,[2:]2*"`, with `Grid.Column="2"` followed by `→ 2*`). Layouts Avalonia rejects (three-value Thickness) get no hints. Zed shows inlay hints only with `"inlay_hints": { "enabled": true }`.
 - **Self-closing tags**: typing `/` before the `>` of `<Button …></Button>` removes the empty `</Button>` (on-type formatting; Zed's `use_on_type_formatting` must be on, which is the default).
 - **Custom markup extensions** from your xmlns prefixes (`{localization:Localize …}`), with their properties as keys; `$parent[Type]` offers control types.
@@ -25,12 +25,27 @@ the server for you. Any other editor that speaks LSP can run it over stdio. For 
 - **Resources**: every `x:Key` in the project's `.axaml` files (read from disk and from unsaved buffers, no build needed) plus the keys of compiled themes such as Fluent (read from the theme DLL), ranked by whether they fit the property; hover and go-to-definition on a key.
 - **Find all references** and **rename**, across files: element names (`x:Name`, `#name`, `ElementName=`, selector `#name`; within the file), resource keys (`x:Key`, `{StaticResource}`/`{DynamicResource}`, and `Resources["key"]` / `TryGetResource("key")` in C#), style classes (selectors, `Classes="…"`, `Classes.x=`, `Setter Property="Classes"`, and `Classes.Add("x")` in C#), and C# members and types used from XAML (binding segments, properties, handlers, `x:Class`/`x:DataType`). Rename of a view-model member also renames it in C# through Roslyn; for CommunityToolkit it renames the source declaration (`[ObservableProperty]` field → the field, a partial property → the property, `[RelayCommand]` method → the method, so the new command name must end in `Command`) and keeps the XAML in step. Library members cannot be renamed. Rename only edits files inside the project folder.
 - **Renames done in C# follow into AXAML**: when a saved `.cs` file differs from the previous version only by identifiers swapped one-for-one (what the C# server's rename, or a careful hand edit, produces) and one of them is a declaration, the AXAML that used the old name is updated, including the CommunityToolkit members generated from it (`_title` → `_heading` makes `{Binding Title}` become `{Binding Heading}`; `Save()` → `Store()` makes `SaveCommand` become `StoreCommand`). Open AXAML files are changed as unsaved, undoable edits; closed ones are rewritten on disk only if they did not change in between. A message says how many places changed.
+- **Highlight other uses** in the file of the element name, resource key, style class or binding member under the cursor (declarations as writes), and of the matching start or end tag.
+- **Expand selection** (`textDocument/selectionRange`, for editors that ask for it: VS Code's Expand Selection, Neovim, Helix): word, markup argument value, argument, extension (and each enclosing one), attribute value, attribute, tag, element, then each parent's children and the parent, up to the document.
+- **Clickable paths**: path values that resolve to a project file (`/Assets/logo.png`, `avares://YourApp/…`, `../x.svg`, `{SvgImage …}`) are document links to that file, with the project-relative path as tooltip.
+- **Project-wide symbol search** (`project symbols` in Zed): views (`x:Class`), resource keys, element names, styles (by selector), control themes and data templates of every loaded project, fuzzy-matched. They are shown as LSP symbol kinds: view → Class, key → Key, element name → Field, style → Struct, control theme → Interface, data template → TypeParameter. At most 200 results.
+- **Markup extension argument hints** (signature help): inside `{Binding …}`, `{StaticResource …}`, `{x:Static …}`, `{RelativeSource …}`, `{OnPlatform …}` and the project's own extensions (each public constructor plus the settable properties, with their doc comments), the argument under the cursor is highlighted. In a nested extension the inner one answers.
+- **Paths follow file renames and moves**: renaming or moving an asset, a folder or a view in the editor's project panel rewrites the path values that point at it (`/Assets/…` stays absolute, `avares://YourApp/…` keeps its assembly, relative paths are recomputed, including a moved view's own). When a view and its `.axaml.cs` are renamed together, the class is renamed too (setting `renameFiles.updateClass`). Paths that would leave the project are left alone.
+- **Refactorings** (code actions):
+  - **Sort attributes** on the tag under the cursor; line breaks stay where they were.
+  - **Wrap in** Border, Grid, StackPanel, Panel or ScrollViewer, for a selected control or the cursor on its tag
+    name. Attached layout such as `Grid.Row` moves to the new container.
+  - **Extract to resource** for a literal value: a brush from a color, Color, Thickness, CornerRadius, FontFamily,
+    a number, bool or string. It goes into the nearest `Resources`, as `{StaticResource …}`.
+  - **Extract to style**: the element's styled values become a `Style` with a new class, in the nearest `Styles`.
+  - **Convert to compiled binding** for a `{ReflectionBinding …}` whose path checks against `x:DataType`.
 - **Linked editing of tag names**: renaming `<Grid>` renames its `</Grid>` as you type (Zed's `linked_edits`, on by default).
 - **Quick fixes** (`editor: toggle code actions`): "Change to 'X'" for an unknown property, binding member, resource key or markup extension (closest names first); "Import 'Ns' as xmlns:prefix" for an unknown type (or just the prefix when the namespace is already declared); "Add `x:DataType="vm:MainViewModel"`" for a compiled binding without one (the view's own view model first); "Create handler 'OnSave' in MainView.axaml.cs" for a missing event handler (with the `using` its arguments need); "Change to '…'" for a missing file.
 - **Hover** also shows a color swatch for color resources and literals (with `#hex`, `rgb()` and `hsl()`), a table for `Thickness`/`CornerRadius`/`BoxShadow` values (`Left 7 · Top 2 · Right 7 · Bottom 2`), and for selector parts the type, where a class is set (first five places), what a pseudo-class means and who declares it, template parts, `/template/` and `^`.
 - **Outline and breadcrumbs**: one symbol per element (`Button #SaveButton .accent`, `Style Button.Actions:pointerover`, `SolidColorBrush [AccentBrush]`, `Setter Background`), nested. Zed uses it only with `"document_symbols": "on"` (see Setup); without it the tree-sitter outline lists named elements, `x:Key` resources and styles.
 - **Folding** of multi-line elements, multi-line start tags, comments and `<!-- #region Name -->` … `<!-- #endregion -->` blocks. Zed uses it only with `"document_folding_ranges": "on"`.
-- **Go to the view model and the code-behind**: `editor: go to type definition` jumps to the type of the symbol under the cursor, or (anywhere else) to the `x:DataType` in scope; `editor: go to implementation` jumps to the `x:Class` in `MainView.axaml.cs`, or to the handler method from an event attribute. With `"code_lens": "on"`, the root element also shows `→ MainViewModel` and `→ code-behind` lenses that open those files.
+- **Formatting** (`editor: format`, or `"format_on_save": "on"` with `"formatter": "language_server"` in Zed), whole document or a selection: indentation, one element per line, attributes on their own lines when a tag is long or has many of them (see `formatting` under Options). It only ever changes whitespace between tags and attributes: values, attribute order, comments and text are never touched, nor is anything inside text content, inline content (`TextBlock` with `Run`s) or `xml:space="preserve"`. A document that is not well formed is left alone.
+- **Go to the view model and the code-behind**: `editor: go to type definition` jumps to the type of the symbol under the cursor, or (anywhere else) to the `x:DataType` in scope; `editor: go to implementation` jumps to the `x:Class` in `MainView.axaml.cs`, or to the handler method from an event attribute. With `"code_lens": "on"`, the root element also shows `→ MainViewModel` and `→ code-behind` lenses that open those files. Each `x:Key` shows how many places use it (`3 references`, or `unused`); clicking it opens the first use in another file, since Zed has no command to list references from a lens.
 
 ## What it checks
 
@@ -87,7 +102,25 @@ Options the server reads from `lsp.axaml-ls.initialization_options`:
     "axaml-ls": {
       "initialization_options": {
         "verbose": false,
-        "inlayHints": { "bindingSource": true }   // false hides the (MainViewModel). hint before binding paths
+        "inlayHints": { "bindingSource": true },  // false hides the (MainViewModel). hint before binding paths
+        "codeLens": { "resourceReferences": true },  // false hides the "N references" lens on x:Key
+        "renameFiles": { "updateClass": true },  // false: renaming a view and its code-behind leaves x:Class alone
+        "formatting": {
+          "attributesOnSeparateLines": "auto",     // "auto" | "always" | "never"
+          "attributesOnSeparateLinesThreshold": 3, // with "auto": break a tag with more attributes than this
+          "maxLineLength": 120,                    // with "auto": break a tag longer than this on one line
+          "firstAttributeOnSameLine": true,        // keep the first attribute next to the tag name
+          "indentAttributesBy": "alignWithFirst",  // "alignWithFirst" | "indent" (one level deeper than the tag)
+          "spaceBeforeSelfClosingSlash": true,     // <Border /> rather than <Border/>
+          "keepBlankLines": 1,                     // longer runs of blank lines between elements shrink to this
+          // Order for the "Sort attributes" refactoring (formatting itself never sorts): exact names, "Prefix*",
+          // "*" for the rest and "@events"; ties sort by name. Omit for this default:
+          // ["x:Class", "xmlns", "xmlns:*", "x:Name", "Name", "x:Key", "x:DataType", "Grid.*", "DockPanel.*",
+          //  "Canvas.*", "RelativePanel.*", "Width", "Height", "MinWidth", "MinHeight", "MaxWidth", "MaxHeight",
+          //  "Margin", "Padding", "HorizontalAlignment", "VerticalAlignment", "HorizontalContentAlignment",
+          //  "VerticalContentAlignment", "*", "@events"]
+          "attributeOrder": null
+        }
       }
     }
   }
@@ -98,6 +131,8 @@ Options the server reads from `lsp.axaml-ls.initialization_options`:
 
 ## Development
 
+Code follows [`docs/ENGINEERING.md`](docs/ENGINEERING.md) (CUPID rules, definition of done, known deviations).
+
 Everything is pinned with [mise](https://mise.jdx.dev) (`mise install` gets the .NET SDK).
 
 | Task | What it does |
@@ -107,6 +142,9 @@ Everything is pinned with [mise](https://mise.jdx.dev) (`mise install` gets the 
 | `mise run check -- <dir>` | Lint `.axaml` files from the terminal, compiler style. Exits 1 on errors, so it also works in CI |
 | `scripts/lsp-*.py` | Probes against the installed server and a real project: `lsp-probe` (completion), `lsp-hints`, `lsp-diagnostics` (hunt false positives), `lsp-references` (references; `rename` prints a WorkspaceEdit, never applies it), `lsp-codeactions` (quick fixes for errors introduced in memory), `lsp-request` (outline, folding, code lens, type definition, implementation, hover) |
 | `mise run smoke` | Drive the server over LSP stdio like an editor (`scripts/lsp-smoke.py`) |
+| `mise run bench` | Time the server against `main`, side by side, on a generated 33k-file project; exit 1 on a regression (`scripts/bench.sh`) |
+| `dotnet-counters monitor -p <pid> --counters AxamlLs` | Live timings of the running server: analysis phases, requests per method, cancellations |
+| `mise run ci` | What the `ci` workflow runs on every push: build with warnings as errors, then the tests |
 | `mise run package` | Build the release zip locally (`dist/axaml-ls-<version>.zip`), the same as CI |
 
 Releases: bump `<Version>` in `src/AxamlLs/AxamlLs.csproj`, then push a tag `v<version>`. The `release` workflow tests,
@@ -136,7 +174,9 @@ samples/SampleApp/  Avalonia 12 + CommunityToolkit fixture; Views/Broken.axaml l
 - "Used" classes come from `Classes="…"`, `Classes.x="…"` in `.axaml` and `Classes.Add/Set/…("x")` calls in `.cs`; a class built from a computed string counts as unused.
 - Duplicate `x:Class` across files (AVLN2002) is not detected yet.
 - Only the first target framework of a multi-targeted project is loaded.
+- Zed's `editor: select larger syntax node` uses its own tree-sitter grammar, not the server's selection ranges; whether Zed shows document links (clickable paths) depends on the Zed version.
 - C# edits are picked up when the file is saved to disk; unsaved `.cs` buffers are not seen.
+- File changes (new views, assets, saved `.cs` files) come from the editor when it supports `workspace/didChangeWatchedFiles` registration (Zed does), so the server puts no inotify watches on the project. Otherwise it watches the project folder itself; that puts a watch on every folder, `bin/` and `obj/` included, and big repositories can hit `fs.inotify.max_user_watches` (the server then rechecks files every second). `--verbose` logs which source each project uses ("File changes for …").
 
 ## License
 

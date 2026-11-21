@@ -16,11 +16,11 @@ public class HoverTests(SampleProjectFixture sample)
     {
         var offset = Header.Length + 1 + body.IndexOf('|');
         var text = Header + "\n" + body.Replace("|", "") + "\n</UserControl>";
-        var analyzer = sample.Analyze(text);
         var xaml = new ProjectXaml();
         var empty = new Dictionary<string, string>();
-        ProjectXaml.Wire(analyzer, Path.Combine(SampleProjectFixture.SampleDir, "Views", "Scratch.axaml"), sample.Host, () => empty, () => xaml.Files(sample.Host, empty));
-        return Features.Hover(analyzer, offset)?.Markdown;
+        var path = Path.Combine(SampleProjectFixture.SampleDir, "Views", "Scratch.axaml");
+        var analyzer = sample.Analyze(text, sample.Context(path, empty, () => xaml.Files(sample.Host, empty)));
+        return Hover.At(analyzer, offset)?.Markdown;
     }
 
     [Fact]

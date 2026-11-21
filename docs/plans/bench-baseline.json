@@ -1,0 +1,61 @@
+{
+  "typing": {
+    "scenario": "typing",
+    "n": 40,
+    "median_ms": 1.39,
+    "p95_ms": 2.28,
+    "max_ms": 3.05,
+    "bytes": 38,
+    "publishes": 0
+  },
+  "complete-asset": {
+    "scenario": "complete-asset",
+    "n": 32,
+    "median_ms": 2.62,
+    "p95_ms": 8.8,
+    "max_ms": 46.81,
+    "bytes": 67817,
+    "publishes": 0,
+    "found": true
+  },
+  "references": {
+    "scenario": "references",
+    "n": 40,
+    "median_ms": 26.76,
+    "p95_ms": 62.73,
+    "max_ms": 72.04,
+    "bytes": 108077,
+    "publishes": 0,
+    "results": 705
+  },
+  "rename": {
+    "scenario": "rename",
+    "n": 40,
+    "median_ms": 25.0,
+    "p95_ms": 35.8,
+    "max_ms": 39.67,
+    "bytes": 122129,
+    "publishes": 0,
+    "edits": 705
+  },
+  "resolve": {
+    "scenario": "resolve",
+    "n": 40,
+    "median_ms": 0.3,
+    "p95_ms": 0.39,
+    "max_ms": 0.43,
+    "bytes": 292,
+    "publishes": 0,
+    "first_ms": 0.38
+  },
+  "cancel": {
+    "scenario": "cancel",
+    "n": 40,
+    "median_ms": 23.17,
+    "p95_ms": 31.18,
+    "max_ms": 51.25,
+    "bytes": 81,
+    "publishes": 0,
+    "cancelled": 40
+  }
+}

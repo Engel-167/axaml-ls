@@ -20,13 +20,17 @@ public static partial class Rename
     private static partial Regex XamlName();
 
     /// <summary>Types and members from libraries cannot be renamed: only those declared in a source file of the project.</summary>
+    /// <summary>Rename only edits files inside the project folder: edits elsewhere (a library's sources, a sibling project) are dropped.</summary>
+    public static IReadOnlyList<FileEdit> InsideProject(IReadOnlyList<FileEdit> edits, string? projectDirectory) =>
+        projectDirectory == null ? edits : [.. edits.Where(e => e.Path.StartsWith(projectDirectory + Path.DirectorySeparatorChar, StringComparison.Ordinal))];
+
     public static bool CanRename(Target target) =>
         target is not SymbolTarget s || SourceSymbol(s.Symbol) != null;
 
     private static ISymbol? SourceSymbol(ISymbol symbol)
     {
         if (!Targets.IsGenerated(symbol)) return symbol;
-        return Features.DefinitionSymbols(symbol).FirstOrDefault(c => !Targets.IsGenerated(c));
+        return Definition.Symbols(symbol).FirstOrDefault(c => !Targets.IsGenerated(c));
     }
 
     public static string? Validate(Target target, string newName)
@@ -36,18 +40,19 @@ public static partial class Rename
         return XamlName().IsMatch(newName) ? null : $"'{newName}' is not a valid name (letters, digits, '_', '-' and '.', not starting with a digit).";
     }
 
-    public static async Task<RenameResult> ComputeAsync(Target target, string newName, XamlFile origin, IReadOnlyList<XamlFile> files, ProjectHost? host)
+    public static async Task<RenameResult> ComputeAsync(Target target, string newName, XamlFile origin, IReadOnlyList<XamlFile> files, ProjectHost? host,
+        CancellationToken ct = default)
     {
         if (Validate(target, newName) is { } invalid) return RenameResult.Fail(invalid);
         if (target is not SymbolTarget symbolTarget)
         {
-            var occurrences = await Targets.OccurrencesAsync(target, origin, files, host).ConfigureAwait(false);
+            var occurrences = await Targets.OccurrencesAsync(target, origin, files, host, ct).ConfigureAwait(false);
             return new RenameResult([.. occurrences.Select(o => new FileEdit(o.Path, o.Start, o.End, newName))], null);
         }
-        return await RenameSymbolAsync(symbolTarget.Symbol, newName, origin, files, host).ConfigureAwait(false);
+        return await RenameSymbolAsync(symbolTarget.Symbol, newName, files, host, ct).ConfigureAwait(false);
     }
 
-    private static async Task<RenameResult> RenameSymbolAsync(ISymbol symbol, string newName, XamlFile origin, IReadOnlyList<XamlFile> files, ProjectHost? host)
+    private static async Task<RenameResult> RenameSymbolAsync(ISymbol symbol, string newName, IReadOnlyList<XamlFile> files, ProjectHost? host, CancellationToken ct)
     {
         if (host?.Solution is not { } solution) return RenameResult.Fail("The project is not loaded yet.");
         var edits = new List<FileEdit>();
@@ -62,26 +67,26 @@ public static partial class Rename
             if (error != null) return RenameResult.Fail(error);
             if (toRename == null) return RenameResult.Fail($"Cannot find the source declaration of '{symbol.Name}'.");
             // References to the generated member from the project's own C# (Title = "x") stay the generator's job: rewrite them too.
-            foreach (var o in await Targets.CodeReferencesOfAsync(symbol, host).ConfigureAwait(false))
+            foreach (var o in await Targets.CodeReferencesOfAsync(symbol, host, ct).ConfigureAwait(false))
                 edits.Add(new FileEdit(o.Path, o.Start, o.End, newName));
         }
 
         try
         {
-            var renamed = await Renamer.RenameSymbolAsync(solution, toRename, new SymbolRenameOptions(), roslynName).ConfigureAwait(false);
+            var renamed = await Renamer.RenameSymbolAsync(solution, toRename, new SymbolRenameOptions(), roslynName, ct).ConfigureAwait(false);
             foreach (var change in renamed.GetChanges(solution).GetProjectChanges().SelectMany(pc => pc.GetChangedDocuments()))
             {
                 var oldDoc = solution.GetDocument(change);
                 var newDoc = renamed.GetDocument(change);
                 if (oldDoc?.FilePath is not { } path || newDoc == null || !File.Exists(path) || ProjectFiles.IsBuildOutput(path)) continue;
                 if (!path.StartsWith(host.ProjectDirectory + Path.DirectorySeparatorChar, StringComparison.Ordinal)) continue;
-                var oldText = await oldDoc.GetTextAsync().ConfigureAwait(false);
+                var oldText = await oldDoc.GetTextAsync(ct).ConfigureAwait(false);
                 if (oldText.Length != File.ReadAllText(path).Length) continue; // changed on disk since Roslyn read it
-                foreach (var c in await newDoc.GetTextChangesAsync(oldDoc).ConfigureAwait(false))
+                foreach (var c in await newDoc.GetTextChangesAsync(oldDoc, ct).ConfigureAwait(false))
                     edits.Add(new FileEdit(path, c.Span.Start, c.Span.End, c.NewText ?? ""));
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.Error("Roslyn rename failed", ex);
             return RenameResult.Fail($"Cannot rename '{symbol.Name}': {ex.Message}");

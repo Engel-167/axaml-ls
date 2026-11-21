@@ -27,6 +27,9 @@ public sealed class ProjectHost : IDisposable
 
     public string ProjectPath { get; }
     public string ProjectDirectory { get; }
+
+    /// <summary>The project folder's file index, resources and style facts.</summary>
+    public ProjectIndexes Indexes { get; }
     public bool CompiledBindingsDefault { get; }
     public ProjectSnapshot? Current => Volatile.Read(ref _current);
     public string? LoadError { get; private set; }
@@ -43,20 +46,25 @@ public sealed class ProjectHost : IDisposable
     /// </summary>
     public Func<ProjectHost, IReadOnlyList<Analysis.CodeRename>, Task>? CodeRenamed { get; set; }
 
-    public ProjectHost(string projectPath)
+    /// <param name="projectPath">The .csproj file.</param>
+    /// <param name="indexes">The indexes of the project's folder (owned by the caller, shared with the analyses).</param>
+    public ProjectHost(string projectPath, ProjectIndexes indexes)
     {
         ProjectPath = projectPath;
         ProjectDirectory = Path.GetDirectoryName(projectPath)!;
+        Indexes = indexes;
         CompiledBindingsDefault = ProjectFiles.DetectCompiledBindingsDefault(projectPath);
         _debounce = new Timer(_ => _ = ApplyPendingAsync(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
-    public Task EnsureLoadedAsync()
+    /// <summary>Starts loading the project if nobody did, and waits for it.</summary>
+    /// <param name="ct">Ends the wait only: the load keeps going for the next caller.</param>
+    public Task EnsureLoadedAsync(CancellationToken ct = default)
     {
         lock (_loadLock)
         {
-            _loadTask ??= Task.Run(LoadAsync);
-            return _loadTask;
+            _loadTask ??= Task.Run(LoadAsync, CancellationToken.None); // the load serves every caller, not just this one
+            return ct.CanBeCanceled ? _loadTask.WaitAsync(ct) : _loadTask;
         }
     }
 
@@ -120,31 +128,40 @@ public sealed class ProjectHost : IDisposable
         }
     }
 
-    /// <summary>Follows .cs and project file changes through the folder's shared <see cref="FileIndex"/> watcher.</summary>
+    /// <summary>Follows .cs and project file changes through the folder's shared <see cref="FileIndex"/>.</summary>
     private void StartWatching()
     {
         if (_files != null) return;
-        _files = FileIndex.For(ProjectDirectory);
-        _files.Changed += OnFileEvent;
+        _files = Indexes.Files;
+        _files.Changed += OnFileChanges;
+        _files.Overflowed += OnFilesOverflowed;
     }
 
-    private void OnFileEvent(FileSystemEventArgs e)
+    private void OnFileChanges(IReadOnlyList<FileChange> changes)
     {
-        var path = e.FullPath;
-        if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+        var relevant = false;
+        foreach (var (path, _) in changes)
         {
-            _pendingFiles[path] = 0;
+            if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+            {
+                _pendingFiles[path] = 0;
+                relevant = true;
+            }
+            else if (path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".props", StringComparison.OrdinalIgnoreCase) ||
+                     path.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
+            {
+                _reloadRequested = true;
+                relevant = true;
+            }
         }
-        else if (path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".props", StringComparison.OrdinalIgnoreCase) ||
-                 path.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
-        {
-            _reloadRequested = true;
-        }
-        else
-        {
-            return;
-        }
-        _debounce.Change(_reloadRequested ? 1500 : 350, Timeout.Infinite);
+        if (relevant) _debounce.Change(_reloadRequested ? 1500 : 350, Timeout.Infinite);
+    }
+
+    /// <summary>C# changes may have been lost, so the loaded solution may be stale: reload it.</summary>
+    private void OnFilesOverflowed()
+    {
+        _reloadRequested = true;
+        _debounce.Change(1500, Timeout.Infinite);
     }
 
     /// <summary>Lets the language server push an unsaved .cs buffer, if the editor sends one.</summary>
@@ -252,7 +269,11 @@ public sealed class ProjectHost : IDisposable
 
     public void Dispose()
     {
-        if (_files != null) _files.Changed -= OnFileEvent;
+        if (_files != null)
+        {
+            _files.Changed -= OnFileChanges;
+            _files.Overflowed -= OnFilesOverflowed;
+        }
         _debounce.Dispose();
         _workspace?.Dispose();
     }

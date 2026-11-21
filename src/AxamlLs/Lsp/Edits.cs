@@ -12,6 +12,7 @@ public static class Edits
     /// Builds <c>{ "changes": { uri: [ { range, newText } ] } }</c>. Edits are sorted per file, exact duplicates dropped,
     /// and of two overlapping edits only the first is kept (the rest are logged). Zed applies <c>changes</c> to files that are not open too.
     /// </summary>
+    /// <param name="edits">Edits by file path and absolute offsets.</param>
     /// <param name="textOf">The text the offsets refer to: the open buffer if the file is open, else the disk text.</param>
     public static JsonObject ToWorkspaceEdit(IEnumerable<FileEdit> edits, Func<string, (string Text, LineIndex Lines)> textOf)
     {
@@ -29,22 +30,11 @@ public static class Edits
                     continue;
                 }
                 lastEnd = Math.Max(lastEnd, e.End);
-                array.Add(new JsonObject { ["range"] = Range(lines, e.Start, e.End), ["newText"] = e.NewText });
+                array.Add(new JsonObject { ["range"] = Protocol.Range(lines, e.Start, e.End), ["newText"] = e.NewText });
             }
-            changes[LspServer.PathToUri(group.Key)] = array;
+            changes[Protocol.PathToUri(group.Key)] = array;
         }
         return new JsonObject { ["changes"] = changes };
-    }
-
-    public static JsonObject Range(LineIndex lines, int start, int end)
-    {
-        var (sl, sc) = lines.GetPosition(start);
-        var (el, ec) = lines.GetPosition(end);
-        return new JsonObject
-        {
-            ["start"] = new JsonObject { ["line"] = sl, ["character"] = sc },
-            ["end"] = new JsonObject { ["line"] = el, ["character"] = ec },
-        };
     }
 
     /// <summary>Applies one file's edits to its text (for tests and for checking edits).</summary>

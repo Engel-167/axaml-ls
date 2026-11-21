@@ -13,9 +13,9 @@ public class ProjectXamlTests(SampleProjectFixture sample)
     public void Finds_every_axaml_file_of_the_project()
     {
         var files = new ProjectXaml().Files(sample.Host, NoBuffers);
-        Assert.Contains(files, f => f.Path.EndsWith("MainView.axaml"));
-        Assert.Contains(files, f => f.Path.EndsWith("Broken.axaml"));
-        Assert.Contains(files, f => f.Path.EndsWith("Second.axaml"));
+        Assert.Contains(files, f => f.Path.EndsWith("MainView.axaml", StringComparison.Ordinal));
+        Assert.Contains(files, f => f.Path.EndsWith("Broken.axaml", StringComparison.Ordinal));
+        Assert.Contains(files, f => f.Path.EndsWith("Second.axaml", StringComparison.Ordinal));
         Assert.DoesNotContain(files, f => f.Path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"));
     }
 
@@ -53,7 +53,7 @@ public class EditsTests
         var edit = Edits.ToWorkspaceEdit([new FileEdit(A, 4, 7, "XYZ"), new FileEdit(B, 0, 1, "q")], _ => TextOf("abc\ndefgh"));
         var changes = edit["changes"]!.AsObject();
         Assert.Equal(2, changes.Count);
-        var first = changes[LspServer.PathToUri(A)]!.AsArray().Single()!;
+        var first = changes[Protocol.PathToUri(A)]!.AsArray().Single()!;
         Assert.Equal(1, (int)first["range"]!["start"]!["line"]!);
         Assert.Equal(0, (int)first["range"]!["start"]!["character"]!);
         Assert.Equal(3, (int)first["range"]!["end"]!["character"]!);
@@ -64,7 +64,7 @@ public class EditsTests
     public void Drops_duplicates_and_overlaps()
     {
         var edit = Edits.ToWorkspaceEdit([new FileEdit(A, 0, 3, "x"), new FileEdit(A, 0, 3, "x"), new FileEdit(A, 2, 5, "y"), new FileEdit(A, 6, 7, "z")], _ => TextOf("0123456789"));
-        var list = edit["changes"]![LspServer.PathToUri(A)]!.AsArray();
+        var list = edit["changes"]![Protocol.PathToUri(A)]!.AsArray();
         Assert.Equal(["x", "z"], list.Select(e => (string?)e!["newText"]));
     }
 
@@ -74,7 +74,7 @@ public class EditsTests
         // "😀" is two UTF-16 units: the edit after it starts at column 3.
         const string text = "a😀bc";
         var edit = Edits.ToWorkspaceEdit([new FileEdit(A, 3, 4, "B")], _ => TextOf(text));
-        var range = edit["changes"]![LspServer.PathToUri(A)]![0]!["range"]!;
+        var range = edit["changes"]![Protocol.PathToUri(A)]![0]!["range"]!;
         Assert.Equal(3, (int)range["start"]!["character"]!);
         Assert.Equal(4, (int)range["end"]!["character"]!);
     }

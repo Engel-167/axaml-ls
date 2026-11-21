@@ -2,6 +2,7 @@ using AxamlLs.Text;
 using AxamlLs.Workspace;
 using AxamlLs.Xaml;
 using Microsoft.CodeAnalysis;
+using AxamlLs.Telemetry;
 
 namespace AxamlLs.Analysis;
 
@@ -40,21 +41,36 @@ public sealed class XamlAnalyzer
     private readonly Dictionary<(XmlElement, string), ITypeSymbol?> _bindingResults = [];
     private readonly Dictionary<int, ITypeSymbol?> _bindingOrigins = [];
     private HashSet<string>? _ignorablePrefixes;
+    private LineIndex? _lines;
 
     public AnalysisResult Result => _r;
 
-    /// <summary>Project-wide x:Key resources (set by the server; null = only this document's keys).</summary>
-    public Func<IReadOnlyList<ResourceEntry>>? ResourceProvider { get; set; }
+    /// <summary>The line index of the analyzed text: the one passed to <see cref="Analyze"/>, else built on first use.</summary>
+    public LineIndex Lines => LazyInitializer.EnsureInitialized(ref _lines, () => new LineIndex(_doc.Text));
 
-    /// <summary>Style classes and ControlTheme parts of the whole project (set by the server; null = this document only).</summary>
-    public Func<ProjectStyles>? StyleProvider { get; set; }
+    /// <summary>The strict XML check of the text; pass it to the next analysis of the same text to skip it.</summary>
+    public WellFormedness.Checked WellFormed { get; private set; } = null!;
 
-    /// <summary>The .axaml file being analyzed and its project's folder (set by the server; used for asset paths).</summary>
-    public string? DocumentPath { get; set; }
+    /// <summary>What this analysis may ask about the rest of the project (given at creation).</summary>
+    public ProjectContext Context { get; }
 
-    /// <summary>Every analyzed .axaml file of the project (set by the server; used by hover to say where a class is set). Null = only this document.</summary>
-    public Func<IReadOnlyList<XamlFile>>? ProjectFiles { get; set; }
-    public string? ProjectDirectory { get; set; }
+    /// <summary>Whether {Binding} is compiled where x:CompileBindings doesn't say (the project default).</summary>
+    public bool CompiledDefault => _compiledDefault;
+
+    /// <summary>Project-wide x:Key resources; null = only this document's keys.</summary>
+    public Func<IReadOnlyList<ResourceEntry>>? ResourceProvider => Context.Resources;
+
+    /// <summary>Style classes and ControlTheme parts of the whole project; null = this document only.</summary>
+    public Func<ProjectStyles>? StyleProvider => Context.Styles;
+
+    /// <summary>The .axaml file being analyzed (used for relative asset paths).</summary>
+    public string? DocumentPath => Context.DocumentPath;
+
+    /// <summary>Every analyzed .axaml file of the project (hover says where a class is set); null = only this document.</summary>
+    public Func<IReadOnlyList<XamlFile>>? ProjectFiles => Context.Files;
+
+    /// <summary>The project's folder (asset paths); null outside a project.</summary>
+    public string? ProjectDirectory => Context.ProjectDirectory;
 
     public ProjectStyles Styles() => StyleProvider?.Invoke() ?? ClassIndex.ScanText("", _doc.Text);
 
@@ -76,29 +92,43 @@ public sealed class XamlAnalyzer
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<ResourceEntry>, Joined> JoinedResources = new();
     public ProjectSnapshot? Project => _p;
 
-    private XamlAnalyzer(XmlDoc doc, ProjectSnapshot? project, bool compiledDefault)
+    private XamlAnalyzer(XmlDoc doc, ProjectSnapshot? project, bool compiledDefault, ProjectContext context)
     {
+        Context = context;
         _doc = doc;
         _p = project is { HasAvalonia: true } ? project : null;
         _compiledDefault = compiledDefault;
         _r = new AnalysisResult { Doc = doc, Project = _p };
     }
 
-    public static XamlAnalyzer Analyze(string text, ProjectSnapshot? project, bool compiledDefault)
+    /// <param name="text">The document text.</param>
+    /// <param name="project">The loaded project, or null to analyse the XML alone.</param>
+    /// <param name="compiledDefault">Whether bindings are compiled unless x:CompileBindings says otherwise.</param>
+    /// <param name="context">What the analysis may ask about the rest of the project; none = this document only.</param>
+    /// <param name="metrics">Receives the time of each phase (parse, wellformed, resolve), when given.</param>
+    /// <param name="lines">The text's line index when the caller already has one (the server does), else built if needed.</param>
+    /// <param name="wellFormed">The <see cref="WellFormed"/> of an earlier analysis; reused when it is of this same text.</param>
+    public static XamlAnalyzer Analyze(string text, ProjectSnapshot? project, bool compiledDefault, ProjectContext? context = null, ServerMetrics? metrics = null,
+        LineIndex? lines = null, WellFormedness.Checked? wellFormed = null)
     {
+        var start = metrics?.Timestamp() ?? 0;
         var doc = XmlDoc.Parse(text);
-        var analyzer = new XamlAnalyzer(doc, project, compiledDefault);
-        analyzer.Run(text);
+        metrics?.AnalysisPhaseSince(ServerMetrics.Phase.Parse, start);
+        var analyzer = new XamlAnalyzer(doc, project, compiledDefault, context ?? ProjectContext.None) { _lines = lines };
+        analyzer.Run(text, metrics, wellFormed);
         return analyzer;
     }
 
-    private void Run(string text)
+    private void Run(string text, ServerMetrics? metrics, WellFormedness.Checked? earlier)
     {
-        var xmlError = WellFormedness.Check(text);
+        var phaseStart = metrics?.Timestamp() ?? 0;
+        WellFormed = WellFormedness.Check(text, earlier);
+        var xmlError = WellFormed.Error;
+        metrics?.AnalysisPhaseSince(ServerMetrics.Phase.WellFormed, phaseStart);
+        phaseStart = metrics?.Timestamp() ?? 0;
         if (xmlError != null)
         {
-            var lines = new LineIndex(text);
-            var start = lines.GetOffset(xmlError.Line, xmlError.Character);
+            var start = Lines.GetOffset(xmlError.Line, xmlError.Character);
             var end = start;
             while (end < text.Length && !char.IsWhiteSpace(text[end]) && text[end] is not ('<' or '>')) end++;
             if (end == start) end = Math.Min(start + 1, text.Length);
@@ -109,6 +139,7 @@ public sealed class XamlAnalyzer
         CollectNames();
         ResolveClass();
         foreach (var top in _doc.TopLevel) Visit(top, Scope.Root(_compiledDefault));
+        metrics?.AnalysisPhaseSince(ServerMetrics.Phase.Resolve, phaseStart);
     }
 
     // ---------------------------------------------------------------- pass 1: element types
@@ -279,7 +310,7 @@ public sealed class XamlAnalyzer
     }
 
     /// <summary>The element's DataContext="{…}" attribute when it decides the data type (no x:DataType on the element).</summary>
-    private XmlAttr? InferrableDataContext(XmlElement el, ElementInfo info)
+    private static XmlAttr? InferrableDataContext(XmlElement el, ElementInfo info)
     {
         if (info.IsPropertyElement || XAttr(el, "DataType") != null) return null;
         var attr = el.Attr("DataContext");

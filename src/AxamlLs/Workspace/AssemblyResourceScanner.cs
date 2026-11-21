@@ -16,6 +16,11 @@ namespace AxamlLs.Workspace;
 /// </summary>
 public static class AssemblyResourceScanner
 {
+    /// <summary>
+    /// Keyed by DLL path; an entry is stale when the file's timestamp differs, and the next read notices. Static on
+    /// purpose: a DLL (a NuGet package's, the SDK's) is the same for every project that references it, so sharing the
+    /// scan is correct, unlike per-project caches (see <see cref="ProjectIndexes"/>).
+    /// </summary>
     private static readonly ConcurrentDictionary<string, (DateTime Stamp, List<ResourceEntry> Entries)> Cache = new(StringComparer.Ordinal);
 
     private static readonly Dictionary<int, OpCode> OpCodesByValue =

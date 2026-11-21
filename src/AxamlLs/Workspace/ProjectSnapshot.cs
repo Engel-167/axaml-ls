@@ -22,6 +22,9 @@ public sealed class ProjectSnapshot
     /// <summary>XML namespace URI → CLR namespaces, from [XmlnsDefinition] attributes.</summary>
     public IReadOnlyDictionary<string, List<string>> Xmlns { get; }
 
+    /// <param name="projectPath">The .csproj this snapshot belongs to.</param>
+    /// <param name="compilation">The project's compilation, source generators included.</param>
+    /// <param name="compiledBindingsDefault">Whether {Binding} means a compiled binding in this project.</param>
     /// <param name="previous">
     /// The snapshot this one replaces: when the referenced assemblies are the same files (the usual case after a .cs
     /// edit), its scans of their compiled themes and resources are reused instead of being merged again.
@@ -40,11 +43,13 @@ public sealed class ProjectSnapshot
         {
             _libraryResources = previous._libraryResources;
             _themes = previous._themes;
+            _libraryTypes = previous._libraryTypes;
         }
         else
         {
             _libraryResources = new Lazy<IReadOnlyList<ResourceEntry>>(() => AssemblyResourceScanner.Scan(_referencePaths));
             _themes = new Lazy<IReadOnlyDictionary<string, ThemeFacts>>(() => ThemeScanner.Scan(_referencePaths));
+            _libraryTypes = new Lazy<LibraryTypeNames>(() => LibraryTypeNames.Scan(_referencePaths));
         }
     }
 
@@ -76,40 +81,53 @@ public sealed class ProjectSnapshot
     /// <summary>What compiled themes (Fluent, Simple, …) say about each control type: template parts, classes, pseudo-classes.</summary>
     public IReadOnlyDictionary<string, ThemeFacts> LibraryThemes => _themes.Value;
 
-    private Lazy<ILookup<string, INamedTypeSymbol>>? _typesByName;
+    // Shared with the next snapshot while the references are the same files (names only: no symbols cross compilations).
+    private readonly Lazy<LibraryTypeNames> _libraryTypes;
+
+    /// <summary>The referenced assemblies' public type names, shared by snapshots with the same references.</summary>
+    public LibraryTypeNames LibraryTypes => _libraryTypes.Value;
 
     /// <summary>
-    /// Top-level types by simple name, from the project and every reference (for "import this type" fixes): public types,
-    /// plus the project's own internal ones; the System namespaces are skipped. The project's types come first.
+    /// Top-level types with this simple name, for "import this type" fixes: the project's own (any accessibility)
+    /// first, then the public ones of its references, each group by namespace. System.* and Microsoft.* are skipped.
+    /// The project's are found through Roslyn's name index, the references' through <see cref="LibraryTypes"/>.
     /// </summary>
-    public ILookup<string, INamedTypeSymbol> TypesByName =>
-        LazyInitializer.EnsureInitialized(ref _typesByName, () => new Lazy<ILookup<string, INamedTypeSymbol>>(BuildTypesByName)).Value;
+    public IReadOnlyList<INamedTypeSymbol> TypesNamed(string simpleName)
+    {
+        var own = Compilation.GetSymbolsWithName(simpleName, SymbolFilter.Type).OfType<INamedTypeSymbol>()
+            .Where(t => t.ContainingType == null && Offerable(t))
+            .OrderBy(t => t.ContainingNamespace.ToDisplayString(), StringComparer.Ordinal);
+        var library = LibraryTypes.Named(simpleName)
+            .SelectMany(name => Compilation.GetTypesByMetadataName(name))
+            .Where(t => t.DeclaredAccessibility == Accessibility.Public && !IsOwn(t) && Offerable(t))
+            .OrderBy(t => t.ContainingNamespace.ToDisplayString(), StringComparer.Ordinal);
+        return [.. own.Concat(library).Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default)];
+    }
 
-    private ILookup<string, INamedTypeSymbol> BuildTypesByName()
+    private Lazy<IReadOnlyList<INamedTypeSymbol>>? _ownTypes;
+
+    /// <summary>The project's own top-level types (source only, any accessibility), by namespace.</summary>
+    public IReadOnlyList<INamedTypeSymbol> OwnTypes =>
+        LazyInitializer.EnsureInitialized(ref _ownTypes, () => new Lazy<IReadOnlyList<INamedTypeSymbol>>(BuildOwnTypes)).Value;
+
+    private List<INamedTypeSymbol> BuildOwnTypes()
     {
         var found = new List<INamedTypeSymbol>();
         var pending = new Stack<INamespaceSymbol>();
-        pending.Push(Compilation.GlobalNamespace);
+        pending.Push(Compilation.Assembly.GlobalNamespace);
         while (pending.Count > 0)
         {
             var ns = pending.Pop();
-            foreach (var child in ns.GetNamespaceMembers())
-            {
-                if (ns.IsGlobalNamespace && child.Name is "System" or "Microsoft") continue;
-                pending.Push(child);
-            }
-            foreach (var t in ns.GetTypeMembers())
-            {
-                if (t.IsImplicitlyDeclared || t.Name.Length == 0 || t.Name.StartsWith('<')) continue;
-                var own = SymbolEqualityComparer.Default.Equals(t.ContainingAssembly, Compilation.Assembly);
-                if (t.DeclaredAccessibility == Accessibility.Public || own) found.Add(t);
-            }
+            foreach (var child in ns.GetNamespaceMembers()) pending.Push(child);
+            found.AddRange(ns.GetTypeMembers().Where(Offerable));
         }
-        return found
-            .OrderBy(t => SymbolEqualityComparer.Default.Equals(t.ContainingAssembly, Compilation.Assembly) ? 0 : 1)
-            .ThenBy(t => t.ContainingNamespace.ToDisplayString(), StringComparer.Ordinal)
-            .ToLookup(t => t.Name, StringComparer.Ordinal);
+        return [.. found.OrderBy(t => t.ContainingNamespace.ToDisplayString(), StringComparer.Ordinal)];
     }
+
+    private bool IsOwn(ISymbol t) => SymbolEqualityComparer.Default.Equals(t.ContainingAssembly, Compilation.Assembly);
+
+    private static bool Offerable(INamedTypeSymbol t) =>
+        !t.IsImplicitlyDeclared && t.Name.Length > 0 && !t.Name.StartsWith('<') && !LibraryTypeNames.IsFrameworkNamespace(t.ContainingNamespace.ToDisplayString());
 
     /// <summary>True when an unresolved type in this XML namespace is a real error (we know the vocabulary).</summary>
     public bool IsCheckable(string? ns) =>
