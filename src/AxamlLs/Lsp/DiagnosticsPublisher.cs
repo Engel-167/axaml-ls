@@ -9,8 +9,11 @@ namespace AxamlLs.Lsp;
 /// <summary>
 /// Pushes diagnostics for open documents: debounced after edits, re-run when the project changes, skipped when nothing
 /// another document depends on changed, and not re-sent when identical to the last publish.
+/// <para>For an editor that asks for diagnostics itself (pull, F9; the mode is read from the session, fixed at
+/// initialize) nothing is pushed: an edit that changes what other files depend on, or a project update, sends one
+/// <c>workspace/diagnostic/refresh</c> instead, and the editor asks again.</para>
 /// </summary>
-internal sealed class DiagnosticsPublisher(Documents documents, LspClient client, ServerMetrics metrics)
+internal sealed class DiagnosticsPublisher(Documents documents, LspClient client, ServerMetrics metrics, Session session)
 {
     /// <summary>What other files' diagnostics depend on, per project folder: style facts and the set of resource keys.</summary>
     private sealed record CrossFileFacts(ProjectStyles? Styles, HashSet<string>? Keys);
@@ -28,6 +31,8 @@ internal sealed class DiagnosticsPublisher(Documents documents, LspClient client
     /// </summary>
     public void Schedule(OpenDocument doc, int delayMs, bool notifyOthers = false)
     {
+        // Pulled: the editor asks for this document itself; only the effect on others is ours to report.
+        if (Pull && !notifyOthers) return;
         CancellationTokenSource cts;
         lock (doc)
         {
@@ -41,11 +46,12 @@ internal sealed class DiagnosticsPublisher(Documents documents, LspClient client
                 if (delayMs > 0) await Task.Delay(delayMs, cts.Token).ConfigureAwait(false);
                 var analysis = documents.Analyze(doc);
                 if (cts.IsCancellationRequested) return;
-                var diagnostics = new JsonArray();
-                var start = metrics.Timestamp();
-                foreach (var (d, unnecessary) in DocumentDiagnostics.Collect(analysis.Analyzer))
-                    diagnostics.Add(Protocol.Diagnostic(d, analysis.Lines, unnecessary));
-                metrics.AnalysisPhaseSince(ServerMetrics.Phase.Diagnostics, start);
+                if (Pull)
+                {
+                    if (CrossFileFactsChanged(doc, analysis.Analyzer)) await RefreshAsync().ConfigureAwait(false);
+                    return;
+                }
+                var diagnostics = Collect(analysis);
                 if (cts.IsCancellationRequested) return;
                 if (ShouldPublish(doc, diagnostics, analysis.Analyzer.Project))
                     await client.PublishDiagnosticsAsync(doc.Uri, analysis.Version, diagnostics).ConfigureAwait(false);
@@ -61,9 +67,43 @@ internal sealed class DiagnosticsPublisher(Documents documents, LspClient client
         });
     }
 
-    /// <summary>Re-checks the open documents of a project whose code changed.</summary>
+    private bool Pull => session.Client.PullDiagnostics;
+
+    /// <summary>A document's diagnostics in LSP form (also what a pull request answers).</summary>
+    public JsonArray Collect(DocumentAnalysis analysis)
+    {
+        var diagnostics = new JsonArray();
+        var start = metrics.Timestamp();
+        foreach (var (d, unnecessary) in DocumentDiagnostics.Collect(analysis.Analyzer))
+            diagnostics.Add(Protocol.Diagnostic(d, analysis.Lines, unnecessary));
+        metrics.AnalysisPhaseSince(ServerMetrics.Phase.Diagnostics, start);
+        return diagnostics;
+    }
+
+    /// <summary>Asks a pulling editor to ask again for every open document; a no-op if it can't be asked.</summary>
+    private async Task RefreshAsync()
+    {
+        if (!session.Client.DiagnosticRefresh) return;
+        try
+        {
+            // Bounded: an editor that never answers must not leave the call waiting forever.
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await client.CallAsync("workspace/diagnostic/refresh", new JsonObject(), timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Info($"workspace/diagnostic/refresh failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Re-checks the open documents of a project whose code changed (pull: one refresh).</summary>
     public void OnProjectUpdated(ProjectHost host)
     {
+        if (Pull)
+        {
+            _ = RefreshAsync();
+            return;
+        }
         foreach (var doc in documents.All)
         {
             if (documents.HostFor(doc, startLoading: false) == host) Schedule(doc, delayMs: 0);
@@ -71,7 +111,7 @@ internal sealed class DiagnosticsPublisher(Documents documents, LspClient client
     }
 
     /// <summary>Clears a closed document's diagnostics in the editor.</summary>
-    public Task ClearAsync(string uri) => client.PublishDiagnosticsAsync(uri, null, []);
+    public Task ClearAsync(string uri) => Pull ? Task.CompletedTask : client.PublishDiagnosticsAsync(uri, null, []);
 
     /// <summary>
     /// False when the list is the one last sent, for the same project snapshot (another file's edit, a .cs save that

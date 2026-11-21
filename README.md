@@ -10,7 +10,7 @@ the server for you. Any other editor that speaks LSP can run it over stdio. For 
 
 ## Features
 
-- **Diagnostics** that match what Avalonia's XAML compiler reports, while you type.
+- **Diagnostics** that match what Avalonia's XAML compiler reports, while you type. Editors that ask for diagnostics (LSP pull: Zed, VS Code) get them for the file they show, and are told to ask again when an edit or a project change affects other files; others are sent them.
 - **Hover** on bindings, types, properties and handlers, with C# doc comments.
 - **Go to definition**: from a binding to the view-model property or field (also for `[ObservableProperty]` and `[RelayCommand]`), from an `x:Class`, `x:DataType` or element type to its class, from `Click="OnSave"` to the handler, and from `#name` to the element.
 - **Completion**: binding paths (members of the `x:DataType`, then `.`-chained), element names (with the closing tag), attributes, property values (enums, `True`/`False`, named colors, `FontWeight.Bold`-style statics, and fitting resources as `{StaticResource …}`/`{DynamicResource …}`, in `Setter Value` too), `x:DataType` types, markup extensions and `{Binding}` keys.

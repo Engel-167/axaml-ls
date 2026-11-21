@@ -357,6 +357,19 @@ one hash comparison.
 **Tests** (`PullDiagnosticsTests.cs`): full, then unchanged, then full after an edit; a refresh is sent when a class
 used elsewhere is removed; push mode when the client lacks the capability.
 
+**Status: done.**
+- `ClientCapabilities.PullDiagnostics` / `DiagnosticRefresh`; `Lsp/Handlers/DocumentDiagnosticHandler.cs`.
+- `DiagnosticsPublisher` keeps one code path and checks the mode per call. In pull mode it skips the document's own
+  analysis on open and edit: the editor asks for that itself.
+- Unlike the plan, the `resultId` hashes the diagnostics only (SHA-256, 12 bytes), not the project snapshot. Equal
+  diagnostics mean "unchanged" whatever the snapshot. Push still publishes once per new snapshot, which confirms the
+  first result after loading; in pull mode the load's `ProjectUpdated` sends a refresh, which does the same.
+- The refresh call times out after 5 s, so an editor that never answers can't leave it pending.
+- Tests (`PullDiagnosticsTests`):
+  - full, unchanged, then full after an edit, with nothing pushed;
+  - a refresh when a resource key other files may use is renamed (no project needed for that);
+  - push mode for an editor that doesn't pull.
+
 ---
 
 ## F10. Refactorings

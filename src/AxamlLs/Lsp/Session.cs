@@ -9,7 +9,10 @@ namespace AxamlLs.Lsp;
 /// <param name="WorkDoneProgress">The editor shows progress the server reports (project loading).</param>
 /// <param name="WatchedFilesRegistration">The editor accepts file watchers registered at runtime (P1).</param>
 /// <param name="RelativePatterns">Those watchers may be patterns relative to a folder (each project's).</param>
-internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgress, bool WatchedFilesRegistration = false, bool RelativePatterns = false)
+/// <param name="PullDiagnostics">The editor asks for diagnostics (<c>textDocument/diagnostic</c>, F9) instead of being sent them.</param>
+/// <param name="DiagnosticRefresh">The editor accepts <c>workspace/diagnostic/refresh</c>: "ask again for every open file".</param>
+internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgress, bool WatchedFilesRegistration = false, bool RelativePatterns = false,
+    bool PullDiagnostics = false, bool DiagnosticRefresh = false)
 {
     public static readonly ClientCapabilities None = new("?", WorkDoneProgress: false);
 
@@ -21,11 +24,12 @@ internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgre
             (string?)initialize?["clientInfo"]?["name"] ?? "?",
             WorkDoneProgress: (bool?)capabilities?["window"]?["workDoneProgress"] ?? false,
             WatchedFilesRegistration: (bool?)watched?["dynamicRegistration"] ?? false,
-            RelativePatterns: (bool?)watched?["relativePatternSupport"] ?? false);
+            RelativePatterns: (bool?)watched?["relativePatternSupport"] ?? false,
+            PullDiagnostics: capabilities?["textDocument"]?["diagnostic"] is JsonObject,
+            DiagnosticRefresh: (bool?)capabilities?["workspace"]?["diagnostics"]?["refreshSupport"] ?? false);
     }
 }
 
-/// <summary>The user's settings from <c>initializationOptions</c> (see README "Options").</summary>
 /// <summary>Which lenses are shown, besides the view model and code-behind ones.</summary>
 /// <param name="ResourceReferences">"N references" on each <c>x:Key</c>.</param>
 internal sealed record CodeLensOptions(bool ResourceReferences = true);
@@ -34,6 +38,7 @@ internal sealed record CodeLensOptions(bool ResourceReferences = true);
 /// <param name="UpdateClass">Rename the view's class when the view and its code-behind are renamed together.</param>
 internal sealed record RenameFilesOptions(bool UpdateClass = true);
 
+/// <summary>The user's settings from <c>initializationOptions</c> (see README "Options").</summary>
 internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints, FormattingSettings Formatting, CodeLensOptions CodeLens, RenameFilesOptions RenameFiles)
 {
     public static readonly ServerOptions Default = new(Verbose: false, InlayHintOptions.Default, FormattingSettings.Default, new CodeLensOptions(), new RenameFilesOptions());

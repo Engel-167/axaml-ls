@@ -34,6 +34,9 @@ internal sealed class LspTestClient : IAsyncDisposable
         _readLoop = Task.Run(ReadLoopAsync);
     }
 
+    /// <summary>The server's answer to <c>initialize</c> (its capabilities), once <see cref="OpenAsync"/> ran.</summary>
+    public JsonObject? InitializeResult { get; private set; }
+
     /// <summary>Notifications the server sent, in order.</summary>
     public ConcurrentQueue<JsonObject> Notifications { get; } = new();
 
@@ -57,7 +60,7 @@ internal sealed class LspTestClient : IAsyncDisposable
     {
         var initialize = new JsonObject { ["processId"] = null, ["capabilities"] = capabilities ?? new JsonObject() };
         if (initializationOptions != null) initialize["initializationOptions"] = initializationOptions;
-        await RequestAsync("initialize", initialize).ConfigureAwait(false);
+        InitializeResult = (await RequestAsync("initialize", initialize).ConfigureAwait(false))["result"] as JsonObject;
         await NotifyAsync("initialized", new JsonObject()).ConfigureAwait(false);
         await NotifyAsync("textDocument/didOpen", new JsonObject
         {

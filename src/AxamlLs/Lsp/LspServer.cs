@@ -41,7 +41,7 @@ public sealed class LspServer : IDisposable
         var progress = new ProjectLoadProgress(_client, _session);
         var documents = new Documents(_workspace, progress, metrics);
         var semanticTokens = new SemanticTokensResults();
-        var diagnostics = new DiagnosticsPublisher(documents, _client, metrics);
+        var diagnostics = new DiagnosticsPublisher(documents, _client, metrics, _session);
         var targets = new TargetLookup(documents, progress);
         _workspace.ProjectUpdated += diagnostics.OnProjectUpdated;
         _workspace.CodeRenamed = new CodeRenameFollower(documents, _client, watcher).FollowAsync;
@@ -67,6 +67,7 @@ public sealed class LspServer : IDisposable
             new DocumentHighlightHandler(documents),
             new SelectionRangeHandler(documents),
             new DocumentLinkHandler(documents),
+            new DocumentDiagnosticHandler(documents, diagnostics, _session),
             new SignatureHelpHandler(documents),
             new WillRenameFilesHandler(documents, _workspace, _session),
             new WorkspaceSymbolHandler(documents, _workspace),
