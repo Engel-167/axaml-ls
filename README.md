@@ -31,6 +31,14 @@ the server for you. Any other editor that speaks LSP can run it over stdio. For 
 - **Project-wide symbol search** (`project symbols` in Zed): views (`x:Class`), resource keys, element names, styles (by selector), control themes and data templates of every loaded project, fuzzy-matched. They are shown as LSP symbol kinds: view → Class, key → Key, element name → Field, style → Struct, control theme → Interface, data template → TypeParameter. At most 200 results.
 - **Markup extension argument hints** (signature help): inside `{Binding …}`, `{StaticResource …}`, `{x:Static …}`, `{RelativeSource …}`, `{OnPlatform …}` and the project's own extensions (each public constructor plus the settable properties, with their doc comments), the argument under the cursor is highlighted. In a nested extension the inner one answers.
 - **Paths follow file renames and moves**: renaming or moving an asset, a folder or a view in the editor's project panel rewrites the path values that point at it (`/Assets/…` stays absolute, `avares://YourApp/…` keeps its assembly, relative paths are recomputed, including a moved view's own). When a view and its `.axaml.cs` are renamed together, the class is renamed too (setting `renameFiles.updateClass`). Paths that would leave the project are left alone.
+- **Refactorings** (code actions):
+  - **Sort attributes** on the tag under the cursor; line breaks stay where they were.
+  - **Wrap in** Border, Grid, StackPanel, Panel or ScrollViewer, for a selected control or the cursor on its tag
+    name. Attached layout such as `Grid.Row` moves to the new container.
+  - **Extract to resource** for a literal value: a brush from a color, Color, Thickness, CornerRadius, FontFamily,
+    a number, bool or string. It goes into the nearest `Resources`, as `{StaticResource …}`.
+  - **Extract to style**: the element's styled values become a `Style` with a new class, in the nearest `Styles`.
+  - **Convert to compiled binding** for a `{ReflectionBinding …}` whose path checks against `x:DataType`.
 - **Linked editing of tag names**: renaming `<Grid>` renames its `</Grid>` as you type (Zed's `linked_edits`, on by default).
 - **Quick fixes** (`editor: toggle code actions`): "Change to 'X'" for an unknown property, binding member, resource key or markup extension (closest names first); "Import 'Ns' as xmlns:prefix" for an unknown type (or just the prefix when the namespace is already declared); "Add `x:DataType="vm:MainViewModel"`" for a compiled binding without one (the view's own view model first); "Create handler 'OnSave' in MainView.axaml.cs" for a missing event handler (with the `using` its arguments need); "Change to '…'" for a missing file.
 - **Hover** also shows a color swatch for color resources and literals (with `#hex`, `rgb()` and `hsl()`), a table for `Thickness`/`CornerRadius`/`BoxShadow` values (`Left 7 · Top 2 · Right 7 · Bottom 2`), and for selector parts the type, where a class is set (first five places), what a pseudo-class means and who declares it, template parts, `/template/` and `^`.
@@ -104,7 +112,14 @@ Options the server reads from `lsp.axaml-ls.initialization_options`:
           "firstAttributeOnSameLine": true,        // keep the first attribute next to the tag name
           "indentAttributesBy": "alignWithFirst",  // "alignWithFirst" | "indent" (one level deeper than the tag)
           "spaceBeforeSelfClosingSlash": true,     // <Border /> rather than <Border/>
-          "keepBlankLines": 1                      // longer runs of blank lines between elements shrink to this
+          "keepBlankLines": 1,                     // longer runs of blank lines between elements shrink to this
+          // Order for the "Sort attributes" refactoring (formatting itself never sorts): exact names, "Prefix*",
+          // "*" for the rest and "@events"; ties sort by name. Omit for this default:
+          // ["x:Class", "xmlns", "xmlns:*", "x:Name", "Name", "x:Key", "x:DataType", "Grid.*", "DockPanel.*",
+          //  "Canvas.*", "RelativePanel.*", "Width", "Height", "MinWidth", "MinHeight", "MaxWidth", "MaxHeight",
+          //  "Margin", "Padding", "HorizontalAlignment", "VerticalAlignment", "HorizontalContentAlignment",
+          //  "VerticalContentAlignment", "*", "@events"]
+          "attributeOrder": null
         }
       }
     }

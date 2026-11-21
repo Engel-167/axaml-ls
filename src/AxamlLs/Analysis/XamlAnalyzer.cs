@@ -54,6 +54,9 @@ public sealed class XamlAnalyzer
     /// <summary>What this analysis may ask about the rest of the project (given at creation).</summary>
     public ProjectContext Context { get; }
 
+    /// <summary>Whether {Binding} is compiled where x:CompileBindings doesn't say (the project default).</summary>
+    public bool CompiledDefault => _compiledDefault;
+
     /// <summary>Project-wide x:Key resources; null = only this document's keys.</summary>
     public Func<IReadOnlyList<ResourceEntry>>? ResourceProvider => Context.Resources;
 

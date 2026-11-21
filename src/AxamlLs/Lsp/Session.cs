@@ -11,8 +11,9 @@ namespace AxamlLs.Lsp;
 /// <param name="RelativePatterns">Those watchers may be patterns relative to a folder (each project's).</param>
 /// <param name="PullDiagnostics">The editor asks for diagnostics (<c>textDocument/diagnostic</c>, F9) instead of being sent them.</param>
 /// <param name="DiagnosticRefresh">The editor accepts <c>workspace/diagnostic/refresh</c>: "ask again for every open file".</param>
+/// <param name="CodeActionResolve">The editor asks for a code action's edit when it is picked (<c>codeAction/resolve</c>).</param>
 internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgress, bool WatchedFilesRegistration = false, bool RelativePatterns = false,
-    bool PullDiagnostics = false, bool DiagnosticRefresh = false)
+    bool PullDiagnostics = false, bool DiagnosticRefresh = false, bool CodeActionResolve = false)
 {
     public static readonly ClientCapabilities None = new("?", WorkDoneProgress: false);
 
@@ -26,7 +27,9 @@ internal sealed record ClientCapabilities(string ClientName, bool WorkDoneProgre
             WatchedFilesRegistration: (bool?)watched?["dynamicRegistration"] ?? false,
             RelativePatterns: (bool?)watched?["relativePatternSupport"] ?? false,
             PullDiagnostics: capabilities?["textDocument"]?["diagnostic"] is JsonObject,
-            DiagnosticRefresh: (bool?)capabilities?["workspace"]?["diagnostics"]?["refreshSupport"] ?? false);
+            DiagnosticRefresh: (bool?)capabilities?["workspace"]?["diagnostics"]?["refreshSupport"] ?? false,
+            CodeActionResolve: capabilities?["textDocument"]?["codeAction"]?["resolveSupport"]?["properties"] is JsonArray resolvable
+                && resolvable.Any(n => (string?)n == "edit"));
     }
 }
 
@@ -83,7 +86,10 @@ internal sealed record ServerOptions(bool Verbose, InlayHintOptions InlayHints, 
             Get("maxLineLength", d.MaxLineLength),
             Get("spaceBeforeSelfClosingSlash", d.SpaceBeforeSelfClosingSlash),
             Get("keepBlankLines", d.KeepBlankLines),
-            Text("indentAttributesBy") == "indent" ? AttributeIndent.Indent : d.IndentAttributesBy);
+            Text("indentAttributesBy") == "indent" ? AttributeIndent.Indent : d.IndentAttributesBy,
+            f["attributeOrder"] is JsonArray order && order.All(o => o is JsonValue v && v.TryGetValue<string>(out _))
+                ? [.. order.Select(o => (string)o!)]
+                : null);
     }
 }
 

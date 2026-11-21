@@ -26,6 +26,7 @@ public enum AttributeIndent
 /// <param name="SpaceBeforeSelfClosingSlash"><c>&lt;Border /&gt;</c> instead of <c>&lt;Border/&gt;</c>.</param>
 /// <param name="KeepBlankLines">Runs of blank lines between elements shrink to at most this many.</param>
 /// <param name="IndentAttributesBy">Where broken attributes start.</param>
+/// <param name="AttributeOrder">The order "Sort attributes" (F10) uses; null for its default. The formatter never sorts.</param>
 public sealed record FormattingSettings(
     AttributeLayout AttributesOnSeparateLines = AttributeLayout.Auto,
     int AttributesOnSeparateLinesThreshold = 3,
@@ -33,7 +34,8 @@ public sealed record FormattingSettings(
     int MaxLineLength = 120,
     bool SpaceBeforeSelfClosingSlash = true,
     int KeepBlankLines = 1,
-    AttributeIndent IndentAttributesBy = AttributeIndent.AlignWithFirst)
+    AttributeIndent IndentAttributesBy = AttributeIndent.AlignWithFirst,
+    IReadOnlyList<string>? AttributeOrder = null)
 {
     public static readonly FormattingSettings Default = new();
 }

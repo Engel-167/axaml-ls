@@ -4,6 +4,9 @@ A work plan for an agent or a person continuing `axaml-ls`. Read `docs/ENGINEERI
 CUPID rules it serves, and its "Definition of done" applies to each feature. The repo conventions in `docs/PLAN.md`
 ("How to work in this repo") still hold.
 
+**Status (2026-11-20): F0–F11 done.** Not done: on-type formatting on `\n`/`>` (F1, nice-to-have) and the
+`didRenameFiles` fallback (F4); each feature's status note lists its differences from this plan.
+
 Features are ordered by value, except that F0 comes first. F0 is a refactor with no behavior change; it makes each
 later feature "one handler, one analysis file, one test file".
 
@@ -415,6 +418,30 @@ Refactorings, in this order:
 
 **Tests:** one file per refactoring (`SortAttributesTests.cs`, …). Each refactoring's result must be well formed and
 analyse with no *new* diagnostics. That is a shared helper assertion in `TargetTestSupport`.
+
+**Status: done.**
+- `Analysis/Refactorings/`: `IRefactoring`, one file per refactoring, and `RefactoringText` for indentation and
+  inserting children. `codeAction/resolve` is `CodeActionResolveHandler`.
+- Editors without `resolveSupport` for `edit` get the edit in the list.
+- A resolve after the document changed answers "content modified".
+- Differences from the plan:
+  - `TitleAt` takes the settings, so the lightbulb and the edit agree on the attribute order.
+  - "Comments between attributes" can't happen (XML has no comments inside tags).
+  - Sorting keeps each gap in place and moves the attributes through them, so the tag's line breaks stay.
+  - "Wrap in" shifts the element one indent unit as written rather than running `XamlLayout`, which would also
+    reflow its attributes. It moves attached layout to the container and refuses non-controls and
+    `xml:space="preserve"`.
+  - "Extract to resource" refuses a brush that isn't a plain color and a value on the root element. It returns no
+    key range for a follow-up rename (LSP has no standard way to start one).
+  - "Extract to style" moves only Avalonia (styled) properties; the new class avoids names in `Classes` and in
+    selectors.
+  - "Convert to compiled binding" checks by analysing the converted text, and writes `CompiledBinding` where
+    `{Binding}` isn't compiled by default.
+- Tests:
+  - one file per refactoring (`SortAttributesTests`, `WrapInTests`, `ExtractToResourceTests`, `ExtractToStyleTests`,
+    `ConvertToCompiledBindingTests`), checked by `RefactoringTestSupport.Apply` in `TargetTestSupport.cs`: well
+    formed, nothing new reported;
+  - `RefactoringRequestTests` covers listing, resolve, a stale resolve and editors without resolve.
 
 ---
 
